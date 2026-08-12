@@ -211,6 +211,10 @@ impl TaskNotificationStore {
         true
     }
 
+    pub fn get(&self, id: &str) -> Option<&TaskNotification> {
+        self.notifications.get(id)
+    }
+
     pub fn dismiss(&mut self, id: &str) -> bool {
         self.notifications.remove(id).is_some()
     }

@@ -19,6 +19,7 @@ use crate::{
         DerivedPetState, EventStateEngine, RuntimeEvent, TokenBucket,
     },
     task_notifications::{TaskAttention, TaskNotification, TaskNotificationStore},
+    task_opener,
 };
 
 const MAX_EVENT_BODY_BYTES: usize = 16 * 1024;
@@ -231,6 +232,22 @@ impl RuntimeManager {
             .expect("runtime core poisoned")
             .clear_agent_messages(agent)
     }
+
+    pub fn open_task_notification(&self, id: &str) -> Result<RuntimeUpdate, String> {
+        self.core
+            .lock()
+            .expect("runtime core poisoned")
+            .open_task_notification_with(id, |session_id| {
+                task_opener::open_codex_task(session_id).map_err(|error| error.to_string())
+            })
+    }
+
+    pub fn dismiss_task_notification(&self, id: &str) -> Result<RuntimeUpdate, String> {
+        self.core
+            .lock()
+            .expect("runtime core poisoned")
+            .dismiss_task_notification(id)
+    }
 }
 
 impl Drop for RuntimeManager {
@@ -428,6 +445,32 @@ impl RuntimeCore {
             self.save_task_notifications(now_ms());
         }
         changed
+    }
+
+    pub fn open_task_notification_with(
+        &mut self,
+        id: &str,
+        open: impl FnOnce(Option<&str>) -> Result<(), String>,
+    ) -> Result<RuntimeUpdate, String> {
+        let session_id = self
+            .task_notifications
+            .get(id)
+            .ok_or_else(|| "任务提醒不存在".to_string())?
+            .session_id
+            .clone();
+        open(session_id.as_deref())?;
+        self.mark_task_notification_read(id);
+        self.latest_attention = None;
+        Ok(self.take_update())
+    }
+
+    pub fn dismiss_task_notification(&mut self, id: &str) -> Result<RuntimeUpdate, String> {
+        if !self.task_notifications.dismiss(id) {
+            return Err("任务提醒不存在".to_string());
+        }
+        self.save_task_notifications(now_ms());
+        self.latest_attention = None;
+        Ok(self.take_update())
     }
 
     pub fn advance_time(&mut self, now_ms: u64) -> DerivedPetState {

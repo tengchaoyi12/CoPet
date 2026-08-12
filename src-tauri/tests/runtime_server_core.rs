@@ -970,6 +970,48 @@ fn codex_runtime_relimits_task_text_before_exposing_notifications() {
     assert!(!notification.summary.as_ref().unwrap().contains('\n'));
 }
 
+#[test]
+fn failed_task_open_keeps_notification_unread() {
+    let mut core = RuntimeCore::new("secret".to_string());
+    core.handle_event(
+        Some("Bearer secret"),
+        codex_event("session.stop", "thread-1", "turn-1"),
+        100,
+    )
+    .unwrap();
+
+    let result = core.open_task_notification_with("codex:thread-1:turn-1", |_| {
+        Err("Codex 无法打开".to_string())
+    });
+
+    assert_eq!(result, Err("Codex 无法打开".to_string()));
+    assert!(core.status().notifications[0].unread);
+}
+
+#[test]
+fn dismiss_task_notification_removes_only_selected_notification() {
+    let mut core = RuntimeCore::new("secret".to_string());
+    core.handle_event(
+        Some("Bearer secret"),
+        codex_event("session.stop", "thread-1", "turn-1"),
+        100,
+    )
+    .unwrap();
+    core.handle_event(
+        Some("Bearer secret"),
+        codex_event("session.stop", "thread-2", "turn-2"),
+        200,
+    )
+    .unwrap();
+
+    let update = core
+        .dismiss_task_notification("codex:thread-1:turn-1")
+        .unwrap();
+
+    assert_eq!(update.notifications.len(), 1);
+    assert_eq!(update.notifications[0].id, "codex:thread-2:turn-2");
+}
+
 fn codex_event(kind: &str, session_id: &str, turn_id: &str) -> RuntimeEvent {
     RuntimeEvent {
         agent: "codex".to_string(),

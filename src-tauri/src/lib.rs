@@ -12,6 +12,7 @@ pub mod runtime_server;
 pub mod runtime_state;
 pub mod sound_pack;
 pub mod task_notifications;
+pub mod task_opener;
 pub mod window_placement;
 
 use agents::{AdapterError, AdapterOperationResult, AdapterSummary, AgentManager};
@@ -630,6 +631,28 @@ fn get_runtime_status(app: tauri::AppHandle) -> RuntimeSnapshot {
         })
 }
 
+#[tauri::command]
+fn open_task_notification(
+    app: tauri::AppHandle,
+    id: String,
+    runtime: tauri::State<'_, RuntimeManager>,
+) -> Result<RuntimeUpdate, String> {
+    let update = runtime.open_task_notification(&id)?;
+    emit_runtime_update(&app, update.clone());
+    Ok(update)
+}
+
+#[tauri::command]
+fn dismiss_task_notification(
+    app: tauri::AppHandle,
+    id: String,
+    runtime: tauri::State<'_, RuntimeManager>,
+) -> Result<RuntimeUpdate, String> {
+    let update = runtime.dismiss_task_notification(&id)?;
+    emit_runtime_update(&app, update.clone());
+    Ok(update)
+}
+
 fn emit_app_state_changed(app: &tauri::AppHandle, state: &AppState) -> Result<(), String> {
     for label in ["pet", "settings"] {
         app.emit_to(
@@ -1147,6 +1170,8 @@ pub fn run() {
             import_pet_folder,
             remove_pet,
             get_runtime_status,
+            open_task_notification,
+            dismiss_task_notification,
             open_settings_window,
             list_agent_adapters,
             install_agent_adapter,
