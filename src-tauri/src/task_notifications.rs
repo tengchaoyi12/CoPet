@@ -1,4 +1,9 @@
-use std::collections::BTreeMap;
+use std::{
+    collections::BTreeMap,
+    fs::{self, OpenOptions},
+    io::{self, Write},
+    path::Path,
+};
 
 use serde::{Deserialize, Serialize};
 
@@ -61,13 +66,60 @@ pub struct ApplyTaskResult {
     pub dominant_state: Option<PetStateId>,
 }
 
-#[derive(Debug, Default, Serialize, Deserialize)]
+const MAX_STORED_NOTIFICATIONS: usize = 100;
+const NOTIFICATION_RETENTION_MS: u64 = 30 * 24 * 60 * 60 * 1_000;
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TaskNotificationStore {
     notifications: BTreeMap<String, TaskNotification>,
 }
 
 impl TaskNotificationStore {
+    pub fn load(path: &Path, now_ms: u64) -> io::Result<Self> {
+        let bytes = match fs::read(path) {
+            Ok(bytes) => bytes,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Self::default()),
+            Err(error) => {
+                eprintln!(
+                    "[copet:task-notifications:load] 无法读取 {}：{error}",
+                    path.display()
+                );
+                return Ok(Self::default());
+            }
+        };
+        let mut store = match serde_json::from_slice::<Self>(&bytes) {
+            Ok(store) => store,
+            Err(error) => {
+                eprintln!(
+                    "[copet:task-notifications:load] 无法解析 {}：{error}",
+                    path.display()
+                );
+                return Ok(Self::default());
+            }
+        };
+        store.prune_for_persistence(now_ms);
+        Ok(store)
+    }
+
+    pub fn save(&self, path: &Path, now_ms: u64) -> io::Result<()> {
+        let mut persisted = self.clone();
+        persisted.prune_for_persistence(now_ms);
+        let bytes = serde_json::to_vec_pretty(&persisted).map_err(io::Error::other)?;
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        let temporary_path = path.with_extension("json.tmp");
+        let mut file = OpenOptions::new()
+            .create(true)
+            .truncate(true)
+            .write(true)
+            .open(&temporary_path)?;
+        file.write_all(&bytes)?;
+        file.sync_all()?;
+        fs::rename(temporary_path, path)
+    }
+
     pub fn apply(&mut self, event: RuntimeEvent, now_ms: u64) -> ApplyTaskResult {
         let event = normalize_runtime_event(event);
         let Some(status) = status_for_event(&event) else {
@@ -161,6 +213,30 @@ impl TaskNotificationStore {
 
     pub fn dismiss(&mut self, id: &str) -> bool {
         self.notifications.remove(id).is_some()
+    }
+
+    fn prune_for_persistence(&mut self, now_ms: u64) {
+        let mut retained = self
+            .notifications
+            .values()
+            .filter(|task| {
+                task.unread
+                    && task.status != TaskStatus::Running
+                    && now_ms.saturating_sub(task.updated_at_ms) <= NOTIFICATION_RETENTION_MS
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+        retained.sort_by(|left, right| {
+            right
+                .updated_at_ms
+                .cmp(&left.updated_at_ms)
+                .then_with(|| left.id.cmp(&right.id))
+        });
+        retained.truncate(MAX_STORED_NOTIFICATIONS);
+        self.notifications = retained
+            .into_iter()
+            .map(|task| (task.id.clone(), task))
+            .collect();
     }
 }
 

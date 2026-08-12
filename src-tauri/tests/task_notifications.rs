@@ -3,6 +3,7 @@ use copet_lib::{
     task_notifications::{AttentionKind, TaskNotificationStore, TaskStatus},
 };
 use serde_json::json;
+use std::fs;
 
 fn event(
     kind: &str,
@@ -139,4 +140,112 @@ fn dismiss_removes_only_the_selected_task() {
     let visible = store.visible();
     assert_eq!(visible.len(), 1);
     assert_eq!(visible[0].id, "codex:thread-2:turn-2");
+}
+
+#[test]
+fn reload_restores_unread_notification_without_replaying_attention() {
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("task-notifications.json");
+    let mut store = TaskNotificationStore::default();
+    store.apply(
+        event("session.stop", Some("thread-1"), Some("turn-1"), None),
+        100,
+    );
+    store.save(&path, 100).unwrap();
+
+    let mut restored = TaskNotificationStore::load(&path, 200).unwrap();
+
+    assert_eq!(restored.visible().len(), 1);
+    let duplicate = restored.apply(
+        event("session.stop", Some("thread-1"), Some("turn-1"), None),
+        300,
+    );
+    assert!(duplicate.attention.is_none());
+}
+
+#[test]
+fn corrupt_persistence_file_recovers_as_empty_store() {
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("task-notifications.json");
+    fs::write(&path, "not-json").unwrap();
+
+    let restored = TaskNotificationStore::load(&path, 100).unwrap();
+
+    assert!(restored.visible().is_empty());
+}
+
+#[test]
+fn unreadable_persistence_path_recovers_as_empty_store() {
+    let temp = tempfile::tempdir().unwrap();
+
+    let restored = TaskNotificationStore::load(temp.path(), 100).unwrap();
+
+    assert!(restored.visible().is_empty());
+}
+
+#[test]
+fn read_and_dismissed_notifications_are_not_restored() {
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("task-notifications.json");
+    let mut store = TaskNotificationStore::default();
+    store.apply(
+        event("session.stop", Some("thread-1"), Some("turn-1"), None),
+        100,
+    );
+    store.apply(
+        event("session.error", Some("thread-2"), Some("turn-2"), None),
+        200,
+    );
+    store.mark_read("codex:thread-1:turn-1");
+    store.dismiss("codex:thread-2:turn-2");
+    store.save(&path, 300).unwrap();
+
+    let restored = TaskNotificationStore::load(&path, 400).unwrap();
+
+    assert!(restored.visible().is_empty());
+}
+
+#[test]
+fn persistence_keeps_only_the_newest_one_hundred_notifications() {
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("task-notifications.json");
+    let mut store = TaskNotificationStore::default();
+    for index in 0..105 {
+        store.apply(
+            event(
+                "session.stop",
+                Some("thread"),
+                Some(&format!("turn-{index}")),
+                None,
+            ),
+            index,
+        );
+    }
+    store.save(&path, 105).unwrap();
+
+    let restored = TaskNotificationStore::load(&path, 105).unwrap();
+
+    let visible = restored.visible();
+    assert_eq!(visible.len(), 100);
+    assert_eq!(visible[0].id, "codex:thread:turn-104");
+    assert!(!visible.iter().any(|task| task.id == "codex:thread:turn-0"));
+}
+
+#[test]
+fn persistence_discards_notifications_older_than_thirty_days() {
+    const DAY_MS: u64 = 24 * 60 * 60 * 1_000;
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("task-notifications.json");
+    let mut store = TaskNotificationStore::default();
+    store.apply(event("session.stop", Some("old"), Some("turn"), None), 0);
+    store.apply(
+        event("session.stop", Some("recent"), Some("turn"), None),
+        31 * DAY_MS,
+    );
+    store.save(&path, 31 * DAY_MS).unwrap();
+
+    let restored = TaskNotificationStore::load(&path, 31 * DAY_MS).unwrap();
+
+    assert_eq!(restored.visible().len(), 1);
+    assert_eq!(restored.visible()[0].id, "codex:recent:turn");
 }

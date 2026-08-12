@@ -19,6 +19,17 @@ fn make_store(temp: &tempfile::TempDir) -> ConfigStore {
 }
 
 #[test]
+fn task_notifications_are_stored_in_the_runtime_directory() {
+    let temp = tempfile::tempdir().unwrap();
+    let store = make_store(&temp);
+
+    assert_eq!(
+        store.task_notifications_path(),
+        store.root().join("runtime/task-notifications.json")
+    );
+}
+
+#[test]
 fn ensure_ready_initializes_default_pet_tree_without_copying_builtins() {
     let temp = tempfile::tempdir().unwrap();
     let store = make_store(&temp);
