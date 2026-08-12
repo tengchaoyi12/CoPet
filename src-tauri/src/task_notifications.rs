@@ -219,6 +219,13 @@ impl TaskNotificationStore {
         self.notifications.remove(id).is_some()
     }
 
+    pub fn clear_completed(&mut self) -> usize {
+        let before = self.notifications.len();
+        self.notifications
+            .retain(|_, task| task.status != TaskStatus::Completed);
+        before - self.notifications.len()
+    }
+
     fn prune_for_persistence(&mut self, now_ms: u64) {
         let mut retained = self
             .notifications

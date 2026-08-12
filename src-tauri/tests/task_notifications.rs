@@ -249,3 +249,51 @@ fn persistence_discards_notifications_older_than_thirty_days() {
     assert_eq!(restored.visible().len(), 1);
     assert_eq!(restored.visible()[0].id, "codex:recent:turn");
 }
+
+#[test]
+fn clear_completed_removes_only_completed_notifications() {
+    let mut store = TaskNotificationStore::default();
+    store.apply(event("session.stop", Some("done-a"), None, None), 100);
+    store.apply(event("session.stop", Some("done-b"), None, None), 110);
+    store.apply(
+        event("permission.waiting", Some("waiting"), None, None),
+        120,
+    );
+    store.apply(event("session.error", Some("failed"), None, None), 130);
+
+    assert_eq!(store.clear_completed(), 2);
+
+    let visible = store.visible();
+    assert_eq!(visible.len(), 2);
+    assert!(visible
+        .iter()
+        .all(|item| item.status != TaskStatus::Completed));
+    assert!(visible
+        .iter()
+        .any(|item| item.status == TaskStatus::Waiting));
+    assert!(visible.iter().any(|item| item.status == TaskStatus::Failed));
+}
+
+#[test]
+fn clear_completed_is_idempotent_without_completed_notifications() {
+    let mut store = TaskNotificationStore::default();
+    store.apply(
+        event("permission.waiting", Some("waiting"), None, None),
+        100,
+    );
+    store.apply(event("session.error", Some("failed"), None, None), 110);
+    let before = store
+        .visible()
+        .into_iter()
+        .map(|item| (item.id.clone(), item.status))
+        .collect::<Vec<_>>();
+
+    assert_eq!(store.clear_completed(), 0);
+
+    let after = store
+        .visible()
+        .into_iter()
+        .map(|item| (item.id.clone(), item.status))
+        .collect::<Vec<_>>();
+    assert_eq!(after, before);
+}
