@@ -1023,7 +1023,7 @@ pub fn run_agent_auto_install_once(
         return Ok(agents::AutoInstallSummary::default());
     }
 
-    let summary = manager.auto_install_detected_agents();
+    let summary = manager.auto_install_selected(&["codex"]);
     #[cfg(debug_assertions)]
     dev_log_agent_auto_install(&summary);
     store.set_agent_auto_install_complete(true)?;
@@ -1052,6 +1052,12 @@ fn list_agent_adapters() -> Result<Vec<AdapterSummary>, String> {
     let store = ConfigStore::from_home().map_err(localize_store_error)?;
     AgentManager::from_home(store.root())
         .and_then(|manager| manager.list())
+        .map(|adapters| {
+            adapters
+                .into_iter()
+                .filter(|adapter| adapter.id == "codex")
+                .collect()
+        })
         .map_err(localize_adapter_error)
 }
 

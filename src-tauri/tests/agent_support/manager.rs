@@ -216,6 +216,23 @@ fn auto_install_detected_agents_installs_only_available_cli_adapters() {
 }
 
 #[test]
+fn app_auto_install_targets_codex_only() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().join(".copet");
+    let home = temp.path().join("home");
+    let store = ConfigStore::new(&root);
+    store.ensure_ready().unwrap();
+    let manager = manager_with_fake_agent_names(&root, &home, &["codex", "claude", "gemini"]);
+
+    let summary = run_agent_auto_install_once(&store, &manager).unwrap();
+
+    assert_eq!(summary.installed, vec!["codex".to_string()]);
+    assert!(home.join(".codex/hooks.json").exists());
+    assert!(!home.join(".claude/settings.json").exists());
+    assert!(!home.join(".gemini/settings.json").exists());
+}
+
+#[test]
 fn auto_install_detected_agents_skips_already_installed_hooks_without_rewriting() {
     let temp = tempfile::tempdir().unwrap();
     let root = temp.path().join(".copet");
@@ -320,15 +337,15 @@ fn run_agent_auto_install_once_marks_complete_even_when_adapter_fails() {
     let home = temp.path().join("home");
     let store = ConfigStore::new(&root);
     store.ensure_ready().unwrap();
-    let claude_settings = home.join(".claude/settings.json");
-    fs::create_dir_all(claude_settings.parent().unwrap()).unwrap();
-    fs::write(&claude_settings, "{not valid json").unwrap();
-    let manager = manager_with_fake_agent_names(&root, &home, &["claude"]);
+    let codex_hooks = home.join(".codex/hooks.json");
+    fs::create_dir_all(codex_hooks.parent().unwrap()).unwrap();
+    fs::write(&codex_hooks, "{not valid json").unwrap();
+    let manager = manager_with_fake_agent_names(&root, &home, &["codex"]);
 
     let summary = run_agent_auto_install_once(&store, &manager).unwrap();
 
     assert!(summary.installed.is_empty());
     assert_eq!(summary.failed.len(), 1);
-    assert_eq!(summary.failed[0].adapter_id, "claude-code");
+    assert_eq!(summary.failed[0].adapter_id, "codex");
     assert!(store.agent_auto_install_complete().unwrap());
 }

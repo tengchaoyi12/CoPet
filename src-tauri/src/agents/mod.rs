@@ -204,9 +204,28 @@ impl AgentManager {
     }
 
     pub fn auto_install_detected_agents(&self) -> AutoInstallSummary {
+        self.auto_install_selected(
+            &ADAPTERS
+                .iter()
+                .map(|adapter| adapter.id())
+                .collect::<Vec<_>>(),
+        )
+    }
+
+    pub fn auto_install_selected(&self, adapter_ids: &[&str]) -> AutoInstallSummary {
         let mut summary = AutoInstallSummary::default();
 
-        for adapter in ADAPTERS {
+        for adapter_id in adapter_ids {
+            let adapter = match adapter_by_id(adapter_id) {
+                Ok(adapter) => adapter,
+                Err(error) => {
+                    summary.failed.push(AutoInstallFailure {
+                        adapter_id: (*adapter_id).to_string(),
+                        error: error.to_string(),
+                    });
+                    continue;
+                }
+            };
             let adapter_id = adapter.id().to_string();
             if !self.adapter_executable_available(adapter) {
                 summary.skipped.push(adapter_id);
