@@ -2,7 +2,7 @@
   <img src="./public/pet.png" alt="CoPet logo" width="120" />
   <h1>CoPet</h1>
   <p><strong>给 AI Agent 会话配一只会动的桌面宠物。</strong></p>
-  <p>CoPet 使用兼容 Codex 的宠物包，实时感知 Claude Code、Codex、Antigravity、OpenCode、Cursor、Copilot CLI、Pi 和 Gemini 的提示、工具调用、等待、完成与错误状态，让宠物在桌面上跟着工作节奏做出反应。</p>
+  <p>CoPet 使用兼容 Codex 的宠物包，实时感知 Codex 的提示、工具调用、等待、完成与错误状态，让宠物在桌面上跟着工作节奏做出反应。</p>
 </div>
 
 ![CoPet](./public/banner.zh.png)
@@ -47,7 +47,8 @@
 ## 主要功能
 
 - 宠物会实时响应 Agent 的提示、工具调用、等待、完成和错误状态。
-- 支持 Claude Code、Codex、Antigravity、OpenCode、Cursor、Copilot CLI、Pi 和 Gemini。
+- 首版专注支持 Codex，并在首次启动时自动安装可用的 Codex Hook。
+- Codex 任务完成、失败或等待操作时显示独立提醒；点击提醒可返回对应任务。
 - 自带多款宠物，也可以导入兼容 Codex 的宠物包。
 - 互动丰富：悬停、单击、双击、快速连击抚摸、长按、拖拽反应，以及原生右键菜单。
 - 支持全局音效包，也支持宠物自带的交互音效和 Agent 状态音效。
@@ -71,6 +72,8 @@
 ```bash
 sudo xattr -rd com.apple.quarantine /Applications/CoPet.app
 ```
+
+安装后可从“应用程序”目录启动 CoPet。若在“设置 → 通用”中开启“登录后自动启动”，关机或退出登录后，下一次登录 macOS 时 CoPet 会自动启动。
 
 ### Windows
 
@@ -101,18 +104,11 @@ $skill-installer install all CoPet skills from https://github.com/ChanceYu/CoPet
 
 > **仅支持 Codex。** `copet-gen` 依赖上游 `$hatch-pet` / `$imagegen` 完成图像生成，而 `$imagegen` 的默认模式依赖 Codex 自带的 `image_gen` 工具。Claude Code、Cursor 等 Agent 没有该工具，因此不支持。
 
-## 支持的 Agent
+## Codex 任务提醒
 
-| Agent | 集成方式 | 默认配置路径 |
-| --- | --- | --- |
-| Claude Code | JSON hooks | `~/.claude/settings.json` |
-| Codex | JSON hooks + 可信 hook 哈希值 | `~/.codex/hooks.json`, `~/.codex/config.toml` |
-| Antigravity | JSON hooks | `~/.gemini/config/hooks.json` |
-| OpenCode | JS 插件 + 配置入口 | `~/.config/opencode/plugins/copet.js`, `~/.config/opencode/opencode.json` |
-| Cursor | JSON hooks | `~/.cursor/hooks.json` |
-| Copilot CLI | JSON hook 文件 | `~/.copilot/hooks/copet.json` |
-| Pi | TypeScript 扩展 | `~/.pi/agent/extensions/copet/index.ts` |
-| Gemini | JSON hooks | `~/.gemini/settings.json` |
+CoPet 首版只在设置页暴露 Codex 集成，配置路径为 `~/.codex/hooks.json` 和 `~/.codex/config.toml`。任务结束后宠物会显示“任务完成啦，快去看看吧。”；未处理提醒可在重启后恢复，但不会重复播放庆祝音效。
+
+详细行为、排障和验收步骤见 [Codex 任务提醒说明](./docs/codex-task-reminders.md)。
 
 ## 快速开始
 
@@ -122,9 +118,11 @@ $skill-installer install all CoPet skills from https://github.com/ChanceYu/CoPet
 git clone https://github.com/ChanceYu/CoPet.git
 cd CoPet
 pnpm install
-pnpm tauri:dev          # 开发模式
-pnpm tauri:build        # 构建发行版
+pnpm tauri dev          # 开发模式：React 改动热更新，Rust 改动会重编译
+pnpm tauri build        # 构建正式安装包
 ```
+
+调整前端样式和文案时通常无需完整打包，可直接在开发模式预览；修改 Rust 代码或依赖时需要重新编译。正式交付时再运行 `pnpm tauri build`。
 
 ## 项目结构
 

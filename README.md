@@ -2,7 +2,7 @@
   <img src="./public/pet.png" alt="CoPet logo" width="120" />
   <h1>CoPet</h1>
   <p><strong>A living desktop companion for every AI Agent.</strong></p>
-  <p>Powered by Codex-compatible pet packages, CoPet reacts in real time to Claude Code, Codex, Antigravity, OpenCode, Cursor, Copilot CLI, Pi, and Gemini, turning prompts, tool use, waiting, and completions into lively pet reactions on your desktop.</p>
+  <p>Powered by Codex-compatible pet packages, CoPet reacts in real time to Codex prompts, tool use, waiting, errors, and completions.</p>
 </div>
 
 ![CoPet](./public/banner.png)
@@ -47,7 +47,8 @@ Built with Tauri, Rust, and React. Lightweight, local-first, no cloud.
 ## Features
 
 - Real-time pet reactions to Agent prompts, tool use, waiting, completion, and errors.
-- Integrations for Claude Code, Codex, Antigravity, OpenCode, Cursor, Copilot CLI, Pi, and Gemini.
+- The first release focuses on Codex and automatically installs its hook when Codex is available.
+- Separate actionable reminders appear when Codex tasks complete, fail, or need input.
 - Built-in pets plus import support for Codex-compatible pet packages.
 - Rich pet interactions: hover, click, double-click, rapid-click petting, long-press, drag reactions, and native context menu.
 - Global and per-pet sound packs for interactions and Agent states.
@@ -71,6 +72,8 @@ Drag `CoPet.app` into `/Applications`. The build is not notarized, so run once t
 ```bash
 sudo xattr -rd com.apple.quarantine /Applications/CoPet.app
 ```
+
+Launch CoPet from Applications. Enable **Launch at login** under Settings → General to have macOS start CoPet automatically after future sign-ins.
 
 ### Windows
 
@@ -101,18 +104,11 @@ Restart Codex if the newly installed Skills do not appear.
 
 > **Codex only.** `copet-gen` delegates pet generation to the upstream `$hatch-pet` / `$imagegen` chain, which depends on Codex's built-in `image_gen` tool. Claude Code, Cursor, and other agents do not ship this tool, so the Skill is not supported there.
 
-## Supported agents
+## Codex task reminders
 
-| Agent | Integration | Default config path |
-| --- | --- | --- |
-| Claude Code | JSON hooks | `~/.claude/settings.json` |
-| Codex | JSON hooks + trusted hook hashes | `~/.codex/hooks.json`, `~/.codex/config.toml` |
-| Antigravity | JSON hooks | `~/.gemini/config/hooks.json` |
-| OpenCode | JS plugin + config entry | `~/.config/opencode/plugins/copet.js`, `~/.config/opencode/opencode.json` |
-| Cursor | JSON hooks | `~/.cursor/hooks.json` |
-| Copilot CLI | JSON hook file | `~/.copilot/hooks/copet.json` |
-| Pi | TypeScript extension | `~/.pi/agent/extensions/copet/index.ts` |
-| Gemini | JSON hooks | `~/.gemini/settings.json` |
+The first release exposes only the Codex integration. Its hook configuration lives in `~/.codex/hooks.json` and `~/.codex/config.toml`. Unread task reminders survive a CoPet restart without replaying celebration sounds.
+
+See [Codex task reminders](./docs/codex-task-reminders.md) for behavior, troubleshooting, and acceptance steps.
 
 ## Getting started
 
@@ -122,9 +118,11 @@ Prerequisites: [Rust](https://www.rust-lang.org/tools/install), [Node.js](https:
 git clone https://github.com/ChanceYu/CoPet.git
 cd CoPet
 pnpm install
-pnpm tauri:dev          # development
-pnpm tauri:build        # production bundle
+pnpm tauri dev          # development: React hot reload; Rust changes recompile
+pnpm tauri build        # production bundle
 ```
+
+Frontend styling and copy can usually be previewed without a full bundle. Rust code or dependency changes require recompilation; create a production bundle only when shipping.
 
 ## Project layout
 
