@@ -2,6 +2,7 @@ use copet_lib::{
     diagnostics::RotatingLog,
     runtime_server::{handle_http_request, RuntimeCore, RuntimeServerError, RuntimeToken},
     runtime_state::{normalize_runtime_event, PetStateId, RuntimeEvent},
+    task_notifications::AttentionKind,
 };
 use serde_json::json;
 use std::fs;
@@ -858,4 +859,127 @@ fn runtime_event_log_rotates_under_synthetic_event_stream() {
     assert!(current_size <= 512);
     assert!(rotated_size <= 512);
     assert!(core.status().accepted_events > 0);
+}
+
+#[test]
+fn codex_completed_turn_emits_attention_only_once() {
+    let mut core = RuntimeCore::new("secret".to_string());
+    let completed = codex_event("session.stop", "thread-1", "turn-1");
+
+    core.handle_event(Some("Bearer secret"), completed.clone(), 100)
+        .unwrap();
+    let first = core.take_update();
+    core.handle_event(Some("Bearer secret"), completed, 200)
+        .unwrap();
+    let duplicate = core.take_update();
+
+    assert_eq!(first.notifications.len(), 1);
+    assert_eq!(first.attention.unwrap().kind, AttentionKind::Completed);
+    assert_eq!(duplicate.notifications.len(), 1);
+    assert!(duplicate.attention.is_none());
+    assert!(core.status().attention.is_none());
+}
+
+#[test]
+fn codex_parallel_turns_keep_independent_notifications() {
+    let mut core = RuntimeCore::new("secret".to_string());
+
+    core.handle_event(
+        Some("Bearer secret"),
+        codex_event("session.stop", "thread-1", "turn-1"),
+        100,
+    )
+    .unwrap();
+    core.handle_event(
+        Some("Bearer secret"),
+        codex_event("session.stop", "thread-2", "turn-2"),
+        200,
+    )
+    .unwrap();
+
+    let status = core.status();
+    assert_eq!(status.notifications.len(), 2);
+    assert_eq!(status.notifications[0].id, "codex:thread-2:turn-2");
+    assert_eq!(status.notifications[1].id, "codex:thread-1:turn-1");
+}
+
+#[test]
+fn codex_waiting_notification_overrides_completed_until_read() {
+    let mut core = RuntimeCore::new("secret".to_string());
+    core.handle_event(
+        Some("Bearer secret"),
+        codex_event("session.stop", "completed", "turn-1"),
+        100,
+    )
+    .unwrap();
+    core.handle_event(
+        Some("Bearer secret"),
+        codex_event("permission.waiting", "waiting", "turn-2"),
+        200,
+    )
+    .unwrap();
+
+    assert_eq!(core.status().current_state.state, PetStateId::Waiting);
+    core.mark_task_notification_read("codex:waiting:turn-2");
+    assert_eq!(core.status().current_state.state, PetStateId::Waving);
+}
+
+#[test]
+fn codex_unknown_event_is_rejected_without_incrementing_accepted_count() {
+    let mut core = RuntimeCore::new("secret".to_string());
+    let event = codex_event("session.teleported", "thread-1", "turn-1");
+
+    let result = core.handle_event(Some("Bearer secret"), event, 100);
+
+    assert_eq!(result, Err(RuntimeServerError::UnsupportedEvent));
+    assert_eq!(core.status().accepted_events, 0);
+    assert_eq!(core.status().rejected_events, 1);
+}
+
+#[test]
+fn codex_http_unknown_event_returns_bad_request() {
+    let mut core = RuntimeCore::new("secret".to_string());
+    let body =
+        r#"{"agent":"codex","kind":"session.teleported","sessionId":"thread-1","turnId":"turn-1"}"#;
+    let request = format!(
+        "POST /v1/events HTTP/1.1\r\nHost: 127.0.0.1\r\nAuthorization: Bearer secret\r\nContent-Length: {}\r\n\r\n{}",
+        body.len(),
+        body
+    );
+
+    let response = handle_http_request(&mut core, request.as_bytes(), 100);
+
+    assert_eq!(response.status_code, 400);
+    assert!(response.body.contains("unsupported_event"));
+}
+
+#[test]
+fn codex_runtime_relimits_task_text_before_exposing_notifications() {
+    let mut core = RuntimeCore::new("secret".to_string());
+    let mut event = codex_event("session.stop", "thread-1", "turn-1");
+    event.task_title = Some(format!("  标题   {}  ", "甲".repeat(100)));
+    event.summary = Some(format!("  摘要\n{}  ", "乙".repeat(300)));
+
+    core.handle_event(Some("Bearer secret"), event, 100)
+        .unwrap();
+
+    let notification = &core.status().notifications[0];
+    assert_eq!(notification.title.as_ref().unwrap().chars().count(), 80);
+    assert_eq!(notification.summary.as_ref().unwrap().chars().count(), 240);
+    assert!(!notification.title.as_ref().unwrap().contains("  "));
+    assert!(!notification.summary.as_ref().unwrap().contains('\n'));
+}
+
+fn codex_event(kind: &str, session_id: &str, turn_id: &str) -> RuntimeEvent {
+    RuntimeEvent {
+        agent: "codex".to_string(),
+        kind: kind.to_string(),
+        tool: None,
+        tool_input: None,
+        session_id: Some(session_id.to_string()),
+        turn_id: Some(turn_id.to_string()),
+        task_title: None,
+        summary: None,
+        timestamp: None,
+    }
 }

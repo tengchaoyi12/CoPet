@@ -623,6 +623,8 @@ fn get_runtime_status(app: tauri::AppHandle) -> RuntimeSnapshot {
             endpoint: String::new(),
             current_state: runtime_state::DerivedPetState::idle(),
             messages: Vec::new(),
+            notifications: Vec::new(),
+            attention: None,
             accepted_events: 0,
             rejected_events: 0,
         })
@@ -654,6 +656,8 @@ fn emit_runtime_update(app: &tauri::AppHandle, state: RuntimeUpdate) {
         serde_json::json!({
             "currentState": &state.current_state,
             "messages": &state.messages,
+            "notifications": &state.notifications,
+            "attention": &state.attention,
         }),
     );
     for label in ["pet", "settings"] {
