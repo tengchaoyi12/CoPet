@@ -467,6 +467,9 @@ export async function createAppHarness(browser: Browser, options: AppHarnessOpti
           }
           return null;
         }
+        if (command === "open_codex") {
+          return null;
+        }
 
         if (command === "get_app_state") {
           return state;

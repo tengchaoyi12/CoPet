@@ -691,6 +691,11 @@ fn dismiss_task_notification(
     Ok(update)
 }
 
+#[tauri::command]
+fn open_codex() -> Result<(), String> {
+    task_opener::open_codex_task(None).map_err(|error| error.to_string())
+}
+
 fn emit_app_state_changed(app: &tauri::AppHandle, state: &AppState) -> Result<(), String> {
     for label in ["pet", "settings"] {
         app.emit_to(
@@ -1233,6 +1238,7 @@ pub fn run() {
             get_runtime_status,
             get_autostart_enabled,
             set_autostart_enabled,
+            open_codex,
             open_task_notification,
             dismiss_task_notification,
             open_settings_window,

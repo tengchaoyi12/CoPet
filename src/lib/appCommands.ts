@@ -119,6 +119,15 @@ export async function openSettingsWindow(): Promise<CommandResult> {
   }
 }
 
+export async function openCodex(): Promise<CommandResult> {
+  try {
+    await invoke("open_codex");
+    return { errorMessage: null };
+  } catch (error) {
+    return { errorMessage: toMessage(error) };
+  }
+}
+
 export async function getAutostartEnabled(): Promise<
   CommandResult & { enabled: boolean | null }
 > {

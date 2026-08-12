@@ -33,6 +33,14 @@ fn invalid_session_is_never_inserted_into_a_url() {
 }
 
 #[test]
+fn codex_home_open_plan_uses_application_bundle() {
+    let plan = codex_open_plan(None);
+
+    assert!(plan.primary.is_empty());
+    assert_eq!(plan.fallback, ["open", "-b", "com.openai.codex"]);
+}
+
+#[test]
 fn failed_deep_link_falls_back_to_opening_the_codex_app() {
     let plan = codex_open_plan(Some("thread-1"));
     let mut calls = Vec::new();
