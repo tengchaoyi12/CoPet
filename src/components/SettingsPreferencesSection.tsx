@@ -36,6 +36,10 @@ const emitSliderDrag = (
 };
 
 interface SettingsPreferencesSectionProps {
+  autostartEnabled: boolean;
+  autostartLoading: boolean;
+  autostartPending: boolean;
+  setAutostartEnabled: (enabled: boolean) => void;
   agentMessageDisplay: AgentMessageDisplay;
   setAgentMessageDisplay: (next: AgentMessageDisplay) => void;
   locale: "en-US" | "zh-CN";
@@ -56,6 +60,10 @@ interface SettingsPreferencesSectionProps {
 }
 
 export function SettingsPreferencesSection({
+  autostartEnabled,
+  autostartLoading,
+  autostartPending,
+  setAutostartEnabled,
   agentMessageDisplay,
   setAgentMessageDisplay,
   locale,
@@ -173,6 +181,41 @@ export function SettingsPreferencesSection({
                   data-active={petVisible ? "true" : "false"}
                 >
                   {t(petVisible ? "switchStateOn" : "switchStateOff")}
+                </span>
+              </div>
+            </div>
+          </div>
+
+          <div className="settings-preferences-row">
+            <div className="settings-preferences-row-text">
+              <span className="settings-preferences-row-title">
+                {t("autostart")}
+              </span>
+              <p className="settings-preferences-row-description">
+                {t("autostartDescription")}
+              </p>
+            </div>
+            <div className="settings-preferences-row-control">
+              <div
+                className="settings-switch-row"
+                onClick={() => {
+                  if (!autostartLoading && !autostartPending) {
+                    setAutostartEnabled(!autostartEnabled);
+                  }
+                }}
+              >
+                <Switch
+                  aria-label={t("autostart")}
+                  checked={autostartEnabled}
+                  disabled={autostartLoading || autostartPending}
+                  onCheckedChange={setAutostartEnabled}
+                />
+                <span
+                  aria-hidden="true"
+                  className="settings-switch-state"
+                  data-active={autostartEnabled ? "true" : "false"}
+                >
+                  {t(autostartEnabled ? "switchStateOn" : "switchStateOff")}
                 </span>
               </div>
             </div>

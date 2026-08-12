@@ -358,6 +358,9 @@ export async function createAppHarness(browser: Browser, options: AppHarnessOpti
   let adapters = options.adapters ?? [];
   let codexPets = options.codexPets ?? [];
   let petVisible = options.petVisible ?? true;
+  let autostartEnabled = Boolean(
+    options.commandResults?.get_autostart_enabled ?? false,
+  );
   const scaleFactor = options.scaleFactor ?? 1;
   const monitor =
     options.monitor ??
@@ -470,6 +473,10 @@ export async function createAppHarness(browser: Browser, options: AppHarnessOpti
         }
         if (command === "get_runtime_status") {
           return runtimeStatus;
+        }
+        if (command === "set_autostart_enabled") {
+          autostartEnabled = Boolean(args.enabled);
+          return autostartEnabled;
         }
         if (
           command === "open_task_notification" ||

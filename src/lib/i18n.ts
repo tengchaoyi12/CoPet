@@ -7,6 +7,8 @@ const messages = {
     aboutRepoLink: "View source on GitHub",
     aboutTitle: "About",
     aboutVersion: "Version",
+    autostart: "Launch at login",
+    autostartDescription: "Automatically start CoPet after you sign in.",
     agentIntegrations: "Agent integrations",
     agentIntegrationsLead:
       "Toggle an Agent on and CoPet installs a tiny hook that mirrors that Agent's live status onto your desktop pet.",
@@ -109,6 +111,8 @@ const messages = {
     aboutRepoLink: "在 GitHub 查看源码",
     aboutTitle: "关于",
     aboutVersion: "版本",
+    autostart: "登录后自动启动",
+    autostartDescription: "登录 macOS 后自动启动 CoPet",
     agentIntegrations: "Agent 集成",
     agentIntegrationsLead:
       "开启后 CoPet 会安装一个轻量钩子，把该 Agent 的实时状态同步到桌面宠物上",

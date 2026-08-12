@@ -29,6 +29,7 @@ sys-locale = "0.3"
 tauri = { version = "2", features = ["macos-private-api", "protocol-asset", "tray-icon", "image-png", "image-ico"] }
 tauri-plugin-dialog = "2"
 tauri-plugin-shell = "2"
+tauri-plugin-autostart = "2"
 thiserror = "1"
 toml = "0.8"
 toml_edit = "0.22"

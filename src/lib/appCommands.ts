@@ -119,6 +119,32 @@ export async function openSettingsWindow(): Promise<CommandResult> {
   }
 }
 
+export async function getAutostartEnabled(): Promise<
+  CommandResult & { enabled: boolean | null }
+> {
+  try {
+    return {
+      enabled: await invoke<boolean>("get_autostart_enabled"),
+      errorMessage: null,
+    };
+  } catch (error) {
+    return { enabled: null, errorMessage: toMessage(error) };
+  }
+}
+
+export async function setAutostartEnabled(
+  enabled: boolean,
+): Promise<CommandResult & { enabled: boolean | null }> {
+  try {
+    return {
+      enabled: await invoke<boolean>("set_autostart_enabled", { enabled }),
+      errorMessage: null,
+    };
+  } catch (error) {
+    return { enabled: null, errorMessage: toMessage(error) };
+  }
+}
+
 async function runTaskNotificationCommand(
   command: "open_task_notification" | "dismiss_task_notification",
   id: string,

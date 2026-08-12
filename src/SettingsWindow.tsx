@@ -14,6 +14,7 @@ import { SettingsTipBox } from "./components/SettingsTipBox";
 import { SettingsPetsSection } from "./components/SettingsPetsSection";
 import { SettingsPreferencesSection } from "./components/SettingsPreferencesSection";
 import { SettingsSectionHost } from "./components/SettingsSectionHost";
+import { useAutostart } from "./hooks/useAutostart";
 import type {
   SettingsNavItem,
   SettingsSectionId,
@@ -166,6 +167,9 @@ export function SettingsWindow() {
   const petVisible = usePetVisible(
     isReady && activeSection === "preferences",
   );
+  const autostart = useAutostart(
+    isReady && activeSection === "preferences",
+  );
 
   useEffect(() => {
     let dispose: (() => void) | undefined;
@@ -267,6 +271,9 @@ export function SettingsWindow() {
       case "preferences":
         return (
           <SettingsPreferencesSection
+            autostartEnabled={autostart.enabled}
+            autostartLoading={autostart.loading}
+            autostartPending={autostart.pending}
             agentMessageDisplay={appState.agentMessageDisplay}
             soundPacks={appState.soundPacks ?? []}
             currentSoundPackId={appState.currentSoundPackId ?? ""}
@@ -279,6 +286,7 @@ export function SettingsWindow() {
             petWindowSize={petWindowSize}
             resetPetWindowPosition={resetPetWindowPosition}
             setAgentMessageDisplay={setAgentMessageDisplay}
+            setAutostartEnabled={(enabled) => void autostart.update(enabled)}
             setAgentMessageVisible={setAgentMessageVisible}
             setLocalePreference={setLocalePreference}
             setPetInteractions={setPetInteractions}

@@ -632,6 +632,43 @@ fn get_runtime_status(app: tauri::AppHandle) -> RuntimeSnapshot {
 }
 
 #[tauri::command]
+fn get_autostart_enabled(app: tauri::AppHandle) -> Result<bool, String> {
+    #[cfg(target_os = "macos")]
+    {
+        use tauri_plugin_autostart::ManagerExt;
+        return app
+            .autolaunch()
+            .is_enabled()
+            .map_err(|error| error.to_string());
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = app;
+        Err("当前平台不支持登录自启动".to_string())
+    }
+}
+
+#[tauri::command]
+fn set_autostart_enabled(app: tauri::AppHandle, enabled: bool) -> Result<bool, String> {
+    #[cfg(target_os = "macos")]
+    {
+        use tauri_plugin_autostart::ManagerExt;
+        let manager = app.autolaunch();
+        if enabled {
+            manager.enable().map_err(|error| error.to_string())?;
+        } else {
+            manager.disable().map_err(|error| error.to_string())?;
+        }
+        return manager.is_enabled().map_err(|error| error.to_string());
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = (app, enabled);
+        Err("当前平台不支持登录自启动".to_string())
+    }
+}
+
+#[tauri::command]
 fn open_task_notification(
     app: tauri::AppHandle,
     id: String,
@@ -1079,6 +1116,11 @@ pub fn run() {
                 set_builtin_sounds_dir(dir);
             }
             let store = ConfigStore::from_home()?;
+            #[cfg(target_os = "macos")]
+            app.handle().plugin(tauri_plugin_autostart::init(
+                tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+                None,
+            ))?;
             // ensure_ready already builds the complete startup snapshot. Reuse
             // it for window sizing, menus, and the initial frontend event so
             // startup does not enumerate every pet and sound pack again.
@@ -1170,6 +1212,8 @@ pub fn run() {
             import_pet_folder,
             remove_pet,
             get_runtime_status,
+            get_autostart_enabled,
+            set_autostart_enabled,
             open_task_notification,
             dismiss_task_notification,
             open_settings_window,
