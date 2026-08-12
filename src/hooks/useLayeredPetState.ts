@@ -34,6 +34,7 @@ export type UseLayeredPetStateResult = {
 export function useLayeredPetState(opts?: {
   onLongPress?: (origin: { x: number; y: number }) => void;
   onInteractionSound?: (kind: InteractionSoundKey) => void;
+  onPrimaryAction?: () => void;
   attention?: TaskAttention | null;
 }): UseLayeredPetStateResult {
   const petState = usePetState();
@@ -50,6 +51,7 @@ export function useLayeredPetState(opts?: {
   });
   const motion = useMotionState({
     onDragLand: () => interaction.notifyDragLand(),
+    onPrimaryAction: opts?.onPrimaryAction,
   });
   const emotion = useEmotionState(
     agent,

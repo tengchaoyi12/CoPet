@@ -129,7 +129,7 @@ test("等待、失败和并行任务分别显示，并按 id 关闭", async ({ b
   await expect(page.getByTestId("task-notification")).toHaveCount(1);
 });
 
-test("启动恢复静默，同一注意信号不重复，新完成任务再次庆祝", async ({
+test("启动恢复和后续完成任务都保持静默并更新提醒", async ({
   browser,
 }) => {
   const first = notification(
@@ -164,25 +164,26 @@ test("启动恢复静默，同一注意信号不重复，新完成任务再次�
     notifications: [first],
     attention: { id: first.id, kind: "completed", occurredAtMs: 100 },
   });
-  await expect.poll(async () => (await harness.playedSoundUrls(page)).length).toBe(1);
+  await expect(page.getByTestId("task-notification")).toHaveCount(1);
+  expect(await harness.playedSoundUrls(page)).toEqual([]);
 
   await harness.emitRuntimeUpdate(page, {
     currentState: { state: "waving" },
     notifications: [first],
     attention: { id: first.id, kind: "completed", occurredAtMs: 100 },
   });
-  await page.waitForTimeout(50);
-  expect(await harness.playedSoundUrls(page)).toHaveLength(1);
+  expect(await harness.playedSoundUrls(page)).toEqual([]);
 
   await harness.emitRuntimeUpdate(page, {
     currentState: { state: "waving" },
     notifications: [second, first],
     attention: { id: second.id, kind: "completed", occurredAtMs: 200 },
   });
-  await expect.poll(async () => (await harness.playedSoundUrls(page)).length).toBe(2);
+  await expect(page.getByTestId("task-notification")).toHaveCount(2);
+  expect(await harness.playedSoundUrls(page)).toEqual([]);
 });
 
-test("同一任务等待后完成仍播放完成提醒，重复完成不重播", async ({ browser }) => {
+test("同一任务等待后完成仍更新提醒且宠物保持静态静音", async ({ browser }) => {
   const waiting = notification(
     "codex:thread-1:turn-1",
     "waiting",
@@ -211,17 +212,20 @@ test("同一任务等待后完成仍播放完成提醒，重复完成不重播",
     notifications: [completed],
     attention: { id: completed.id, kind: "completed", occurredAtMs: 200 },
   });
-  await expect(page.locator(".pet-sprite-frame")).toHaveAttribute(
-    "data-emotion",
-    "sparkle",
+  await expect(page.getByTestId("task-notification")).toHaveAttribute(
+    "data-status",
+    "completed",
   );
-  await expect.poll(async () => (await harness.playedSoundUrls(page)).length).toBe(1);
+  await expect(page.locator(".pet-sprite")).toHaveAttribute("data-pet-state", "idle");
+  await expect(page.locator(".pet-sprite")).toHaveAttribute("data-animated", "false");
+  await expect(page.getByTestId("pet-emotion-overlay")).toHaveCount(0);
+  expect(await harness.playedSoundUrls(page)).toEqual([]);
 
   await harness.emitRuntimeUpdate(page, {
     currentState: { state: "waving" },
     notifications: [completed],
     attention: { id: completed.id, kind: "completed", occurredAtMs: 200 },
   });
-  await page.waitForTimeout(50);
-  expect(await harness.playedSoundUrls(page)).toHaveLength(1);
+  await expect(page.getByTestId("task-notification")).toHaveCount(1);
+  expect(await harness.playedSoundUrls(page)).toEqual([]);
 });
