@@ -1,5 +1,6 @@
 pub mod agents;
 pub mod app_state;
+pub mod codex_focus;
 pub mod commands;
 pub mod config_store;
 pub mod diagnostics;
@@ -710,7 +711,7 @@ fn emit_pet_window_visibility_changed(app: &tauri::AppHandle, visible: bool) {
     );
 }
 
-fn emit_runtime_update(app: &tauri::AppHandle, state: RuntimeUpdate) {
+pub(crate) fn emit_runtime_update(app: &tauri::AppHandle, state: RuntimeUpdate) {
     dev_log_app(
         "emit.pet-state-changed",
         serde_json::json!({
@@ -1151,6 +1152,7 @@ pub fn run() {
                 emit_runtime_update(&handle, state);
             })?;
             app.manage(runtime);
+            codex_focus::install_codex_focus_observer(app.handle());
             if let Some(window) = app.get_webview_window("pet") {
                 #[cfg(target_os = "macos")]
                 {
