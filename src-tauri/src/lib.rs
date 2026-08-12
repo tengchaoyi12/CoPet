@@ -1061,8 +1061,17 @@ fn list_agent_adapters() -> Result<Vec<AdapterSummary>, String> {
         .map_err(localize_adapter_error)
 }
 
+pub fn ensure_app_adapter_supported(adapter_id: &str) -> Result<(), String> {
+    if adapter_id == "codex" {
+        Ok(())
+    } else {
+        Err("首版仅支持 Codex 集成".to_string())
+    }
+}
+
 #[tauri::command]
 fn install_agent_adapter(adapter_id: String) -> Result<AdapterOperationResult, String> {
+    ensure_app_adapter_supported(&adapter_id)?;
     let store = ConfigStore::from_home().map_err(localize_store_error)?;
     let result = AgentManager::from_home(store.root())
         .and_then(|manager| manager.install(&adapter_id))
@@ -1076,6 +1085,7 @@ fn uninstall_agent_adapter(
     app: tauri::AppHandle,
     adapter_id: String,
 ) -> Result<AdapterOperationResult, String> {
+    ensure_app_adapter_supported(&adapter_id)?;
     let store = ConfigStore::from_home().map_err(localize_store_error)?;
     let result = AgentManager::from_home(store.root())
         .and_then(|manager| manager.uninstall(&adapter_id))
@@ -1088,6 +1098,7 @@ fn uninstall_agent_adapter(
 
 #[tauri::command]
 fn repair_agent_adapter(adapter_id: String) -> Result<AdapterOperationResult, String> {
+    ensure_app_adapter_supported(&adapter_id)?;
     let store = ConfigStore::from_home().map_err(localize_store_error)?;
     let result = AgentManager::from_home(store.root())
         .and_then(|manager| manager.repair(&adapter_id))

@@ -48,7 +48,7 @@ Built with Tauri, Rust, and React. Lightweight, local-first, no cloud.
 
 - Real-time pet reactions to Agent prompts, tool use, waiting, completion, and errors.
 - The first release focuses on Codex and automatically installs its hook when Codex is available.
-- Separate actionable reminders appear when Codex tasks complete, fail, or need input.
+- Separate actionable reminders appear when Codex tasks complete or need input.
 - Built-in pets plus import support for Codex-compatible pet packages.
 - Rich pet interactions: hover, click, double-click, rapid-click petting, long-press, drag reactions, and native context menu.
 - Global and per-pet sound packs for interactions and Agent states.

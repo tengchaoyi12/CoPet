@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 
 import type { AgentState, EmotionState, InputState } from "../lib/petAnimation";
 import type { TaskAttention } from "../lib/appTypes";
+import { taskAttentionSignalKey } from "../lib/taskAttention";
 
 const SPARKLE_DURATION_MS = 600;
 const SMOKE_DURATION_MS = 800;
@@ -19,7 +20,7 @@ export function useEmotionState(
   const [state, setState] = useState<EmotionState>({ kind: "none" });
   const previousAgentKindRef = useRef<AgentState["kind"]>(agent.kind);
   const previousInputKindRef = useRef<InputState["kind"]>(input.kind);
-  const previousAttentionIdRef = useRef<string | null>(null);
+  const previousAttentionSignalRef = useRef<string | null>(null);
   const timerRef = useRef<number | null>(null);
   const emotionStateRef = useRef<EmotionState>({ kind: "none" });
 
@@ -33,13 +34,15 @@ export function useEmotionState(
 
     const previousKind = previousAgentKindRef.current;
     previousAgentKindRef.current = agent.kind;
+    const attentionSignal = attention && taskAttentionSignalKey(attention);
     const isNewAttention =
-      attention !== null && previousAttentionIdRef.current !== attention.id;
+      attentionSignal !== null &&
+      previousAttentionSignalRef.current !== attentionSignal;
     if (attention !== null) {
-      previousAttentionIdRef.current = attention.id;
+      previousAttentionSignalRef.current = attentionSignal;
     }
 
-    if (isNewAttention && attention.kind === "completed") {
+    if (isNewAttention && attention?.kind === "completed") {
       clearTimer();
       setState({ kind: "sparkle" });
       timerRef.current = window.setTimeout(() => {

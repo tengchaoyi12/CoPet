@@ -2,8 +2,21 @@ use super::helpers::{
     manager_with_fake_agent_names, manager_with_fake_agents, read_json, with_cleared_copilot_home,
     with_opencode_config_dir,
 };
-use copet_lib::{agents::AgentManager, config_store::ConfigStore, run_agent_auto_install_once};
+use copet_lib::{
+    agents::AgentManager, config_store::ConfigStore, ensure_app_adapter_supported,
+    run_agent_auto_install_once,
+};
 use std::fs;
+
+#[test]
+fn app_command_boundary_accepts_only_codex() {
+    assert!(ensure_app_adapter_supported("codex").is_ok());
+
+    for adapter_id in ["claude-code", "gemini", "cursor", "unknown"] {
+        let error = ensure_app_adapter_supported(adapter_id).unwrap_err();
+        assert!(error.contains("Codex"), "{adapter_id}: {error}");
+    }
+}
 
 #[test]
 fn list_exposes_each_platform_adapter() {

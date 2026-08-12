@@ -39,6 +39,7 @@ import { usePetContextMenu } from "./hooks/usePetContextMenu";
 import { agentSoundKeyForPetState, usePetSounds } from "./hooks/usePetSounds";
 import { createTranslator } from "./lib/i18n";
 import type { AgentMessage, PetWindowSize } from "./lib/appTypes";
+import { taskAttentionSignalKey } from "./lib/taskAttention";
 import {
   defaultPetWindowSize,
   maxPetWindowLogicalDimensions,
@@ -85,7 +86,7 @@ export function PetWindow() {
     sounds: selectedSoundPack?.sounds,
   });
   const lastAgentSoundKeyRef = useRef<string | null>(null);
-  const lastTaskAttentionIdRef = useRef<string | null>(null);
+  const lastTaskAttentionSignalRef = useRef<string | null>(null);
   const previousPetStateRef = useRef<string | null>(null);
   const selectedPetIdRef = useRef<string | null>(null);
   const selectedSoundPackIdRef = useRef<string | null>(null);
@@ -244,10 +245,11 @@ export function PetWindow() {
 
     const soundKey = agentSoundKeyForPetState(petState);
     if (taskAttention) {
-      if (lastTaskAttentionIdRef.current === taskAttention.id) {
+      const attentionSignal = taskAttentionSignalKey(taskAttention);
+      if (lastTaskAttentionSignalRef.current === attentionSignal) {
         return;
       }
-      lastTaskAttentionIdRef.current = taskAttention.id;
+      lastTaskAttentionSignalRef.current = attentionSignal;
       if (!soundEnabled || !agentMessageVisible) {
         return;
       }

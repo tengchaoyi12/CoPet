@@ -181,3 +181,47 @@ test("启动恢复静默，同一注意信号不重复，新完成任务再次�
   });
   await expect.poll(async () => (await harness.playedSoundUrls(page)).length).toBe(2);
 });
+
+test("同一任务等待后完成仍播放完成提醒，重复完成不重播", async ({ browser }) => {
+  const waiting = notification(
+    "codex:thread-1:turn-1",
+    "waiting",
+    "等待确认",
+    100,
+  );
+  const completed = notification(
+    "codex:thread-1:turn-1",
+    "completed",
+    "任务完成",
+    200,
+  );
+  const harness = await createAppHarness(browser, { state: zhState });
+  const page = await harness.openPage("pet");
+
+  await harness.emitRuntimeUpdate(page, {
+    currentState: { state: "waiting" },
+    notifications: [waiting],
+    attention: { id: waiting.id, kind: "waiting", occurredAtMs: 100 },
+  });
+  await page.waitForTimeout(50);
+  expect(await harness.playedSoundUrls(page)).toHaveLength(0);
+
+  await harness.emitRuntimeUpdate(page, {
+    currentState: { state: "waving" },
+    notifications: [completed],
+    attention: { id: completed.id, kind: "completed", occurredAtMs: 200 },
+  });
+  await expect(page.locator(".pet-sprite-frame")).toHaveAttribute(
+    "data-emotion",
+    "sparkle",
+  );
+  await expect.poll(async () => (await harness.playedSoundUrls(page)).length).toBe(1);
+
+  await harness.emitRuntimeUpdate(page, {
+    currentState: { state: "waving" },
+    notifications: [completed],
+    attention: { id: completed.id, kind: "completed", occurredAtMs: 200 },
+  });
+  await page.waitForTimeout(50);
+  expect(await harness.playedSoundUrls(page)).toHaveLength(1);
+});

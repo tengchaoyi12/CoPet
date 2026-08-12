@@ -23,10 +23,14 @@ test("登录自启动开关读取并更新系统真实状态", async ({ browser 
   await expect(toggle).not.toBeChecked();
   await toggle.click();
 
-  expect(harness.calls).toContainEqual({
-    command: "set_autostart_enabled",
-    args: { enabled: true },
-  });
+  expect(
+    harness.calls.filter((call) => call.command === "set_autostart_enabled"),
+  ).toEqual([
+    {
+      command: "set_autostart_enabled",
+      args: { enabled: true },
+    },
+  ]);
   await expect(toggle).toBeChecked();
 });
 
