@@ -18,6 +18,7 @@ import type {
   PetSummary,
   PetWindowSize,
   RuntimeStatus,
+  RuntimeUpdate,
 } from "./appTypes";
 
 export type CommandResult = { errorMessage: string | null };
@@ -55,6 +56,8 @@ export async function reloadAppStore(): Promise<CommandResult> {
       appState: app,
       petState: runtime.currentState.state,
       agentMessages: runtime.messages,
+      taskNotifications: runtime.notifications ?? [],
+      taskAttention: null,
     });
     return { errorMessage: null };
   } catch (error) {
@@ -114,6 +117,32 @@ export async function openSettingsWindow(): Promise<CommandResult> {
   } catch (error) {
     return { errorMessage: toMessage(error) };
   }
+}
+
+async function runTaskNotificationCommand(
+  command: "open_task_notification" | "dismiss_task_notification",
+  id: string,
+): Promise<CommandResult> {
+  try {
+    const update = await invoke<RuntimeUpdate>(command, { id });
+    appStore.patch({
+      petState: update.currentState.state,
+      agentMessages: update.messages,
+      taskNotifications: update.notifications,
+      taskAttention: update.attention,
+    });
+    return { errorMessage: null };
+  } catch (error) {
+    return { errorMessage: toMessage(error) };
+  }
+}
+
+export function openTaskNotification(id: string): Promise<CommandResult> {
+  return runTaskNotificationCommand("open_task_notification", id);
+}
+
+export function dismissTaskNotification(id: string): Promise<CommandResult> {
+  return runTaskNotificationCommand("dismiss_task_notification", id);
 }
 
 export async function setLocalePreference(

@@ -11,6 +11,7 @@ import { toast } from "sonner";
 
 import { ErrorView, LoadingView } from "./components/AppShell";
 import { PetSprite } from "./components/PetSprite";
+import { TaskNotifications } from "./components/TaskNotifications";
 import { Toaster } from "./components/ui/sonner";
 import { useLayeredPetState } from "./hooks/useLayeredPetState";
 import { usePetStartupAnimation } from "./hooks/usePetStartupAnimation";
@@ -22,9 +23,11 @@ import {
   usePetInteractions,
   usePetState,
   usePetWindowSize,
+  useTaskAttention,
   useSelectedSoundPack,
   useSelectedPet,
 } from "./hooks/useAppStore";
+import { useTaskNotifications } from "./hooks/useTaskNotifications";
 import {
   dismissAgentMessage,
   openSettingsWindow,
@@ -68,6 +71,8 @@ export function PetWindow() {
   const selectedPet = useSelectedPet();
   const selectedSoundPack = useSelectedSoundPack();
   const petState = usePetState();
+  const taskAttention = useTaskAttention();
+  const taskNotifications = useTaskNotifications();
   const agentMessageVisible = useAgentMessageVisible();
   const petInteractions = usePetInteractions();
   const soundEnabled = petInteractions.enableClickSounds;
@@ -80,6 +85,7 @@ export function PetWindow() {
     sounds: selectedSoundPack?.sounds,
   });
   const lastAgentSoundKeyRef = useRef<string | null>(null);
+  const lastTaskAttentionIdRef = useRef<string | null>(null);
   const previousPetStateRef = useRef<string | null>(null);
   const selectedPetIdRef = useRef<string | null>(null);
   const selectedSoundPackIdRef = useRef<string | null>(null);
@@ -96,6 +102,7 @@ export function PetWindow() {
   const { composed, bindInput, bindMotion, notifyFailed } = useLayeredPetState({
     onLongPress: isMac ? () => openPetContextMenuRef.current() : undefined,
     onInteractionSound: playInteractionSound,
+    attention: taskAttention,
   });
   const startup = usePetStartupAnimation({
     enabled: petInteractions.enableStartupAnimation,
@@ -104,7 +111,17 @@ export function PetWindow() {
     onInteractionSound: playInteractionSound,
     onAgentSound: playAgentSound,
   });
-  const displayedAgentMessages = startup.hideMessages ? [] : agentMessages;
+  const displayedTaskNotifications = startup.hideMessages
+    ? []
+    : taskNotifications.notifications;
+  const taskNotificationAgents = new Set(
+    displayedTaskNotifications.map((notification) => notification.agent),
+  );
+  const displayedAgentMessages = startup.hideMessages
+    ? []
+    : agentMessages.filter(
+        (message) => !taskNotificationAgents.has(message.agent),
+      );
   const displayedComposed = startup.composedOverride ?? composed;
 
   const stackRef = useRef<HTMLDivElement | null>(null);
@@ -154,7 +171,9 @@ export function PetWindow() {
   });
   const configuredPetScale = petWindowScaleFromSize(petWindowSize);
   const fitPetScale =
-    selectedPet && displayedAgentMessages.length === 0
+    selectedPet &&
+    displayedAgentMessages.length === 0 &&
+    displayedTaskNotifications.length === 0
       ? Math.max(
           0.01,
           Math.min(
@@ -224,6 +243,23 @@ export function PetWindow() {
     }
 
     const soundKey = agentSoundKeyForPetState(petState);
+    if (taskAttention) {
+      if (lastTaskAttentionIdRef.current === taskAttention.id) {
+        return;
+      }
+      lastTaskAttentionIdRef.current = taskAttention.id;
+      if (!soundEnabled || !agentMessageVisible) {
+        return;
+      }
+      const attentionSound =
+        taskAttention.kind === "completed"
+          ? "celebrating"
+          : taskAttention.kind === "failed"
+            ? "failed"
+            : "awaitingApproval";
+      playAgentSound(attentionSound);
+      return;
+    }
     if (!soundEnabled || !agentMessageVisible || soundKey === null) {
       lastAgentSoundKeyRef.current = null;
       return;
@@ -244,6 +280,7 @@ export function PetWindow() {
     selectedPet?.id,
     soundEnabled,
     stopAllSounds,
+    taskAttention,
   ]);
 
   useEffect(() => {
@@ -284,6 +321,7 @@ export function PetWindow() {
     selectedPet?.id,
     petScale,
     displayedAgentMessages.length,
+    displayedTaskNotifications.length,
     startup.hideMessages,
     viewportSize.height,
     viewportSize.width,
@@ -408,7 +446,10 @@ export function PetWindow() {
       >
         <div
           className="pet-window-stack"
-          data-fit-pet={displayedAgentMessages.length === 0}
+          data-fit-pet={
+            displayedAgentMessages.length === 0 &&
+            displayedTaskNotifications.length === 0
+          }
           ref={stackRef}
           style={
             selectedPet
@@ -420,6 +461,13 @@ export function PetWindow() {
               : undefined
           }
         >
+          {displayedTaskNotifications.length > 0 ? (
+            <TaskNotifications
+              notifications={displayedTaskNotifications}
+              onDismiss={(id) => void taskNotifications.dismiss(id)}
+              onOpen={(id) => void taskNotifications.open(id)}
+            />
+          ) : null}
           {displayedAgentMessages.length > 0 ? (
             <AgentMessages
               dismissLabel={t("dismiss")}

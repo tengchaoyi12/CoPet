@@ -21,6 +21,7 @@ import type {
 import type { InteractionHandlers } from "./useInteractionState";
 import type { MotionHandlers } from "./useMotionState";
 import type { CooldownStyle } from "../lib/appTypes";
+import type { TaskAttention } from "../lib/appTypes";
 
 export type UseLayeredPetStateResult = {
   layers: PetLayers;
@@ -33,6 +34,7 @@ export type UseLayeredPetStateResult = {
 export function useLayeredPetState(opts?: {
   onLongPress?: (origin: { x: number; y: number }) => void;
   onInteractionSound?: (kind: InteractionSoundKey) => void;
+  attention?: TaskAttention | null;
 }): UseLayeredPetStateResult {
   const petState = usePetState();
   const agentMessages = useAgentMessages();
@@ -49,7 +51,11 @@ export function useLayeredPetState(opts?: {
   const motion = useMotionState({
     onDragLand: () => interaction.notifyDragLand(),
   });
-  const emotion = useEmotionState(agent, interaction.state as InputState);
+  const emotion = useEmotionState(
+    agent,
+    interaction.state as InputState,
+    opts?.attention ?? null,
+  );
 
   const agentActivityRef = useRef(Date.now());
   if (agent.kind !== "none") {

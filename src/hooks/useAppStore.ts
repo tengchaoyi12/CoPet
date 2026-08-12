@@ -19,6 +19,7 @@ import type {
   PetWindowSize,
   RuntimeStatus,
   RuntimeUpdate,
+  TaskAttention,
 } from "../lib/appTypes";
 import { defaultPetInteractionPrefs } from "../lib/appTypes";
 import { defaultPetWindowSize } from "../lib/petWindowUi";
@@ -156,10 +157,13 @@ export function useBootstrapAppStore(): void {
           appState: app,
           petState: runtime.currentState.state,
           agentMessages: runtime.messages,
+          taskNotifications: runtime.notifications ?? [],
+          taskAttention: null,
         });
         copetDevLog("frontend.snapshot.loaded", {
           currentState: runtime.currentState,
           messages: runtime.messages,
+          notifications: runtime.notifications ?? [],
         });
       } catch (error) {
         if (cancelled) return;
@@ -200,6 +204,8 @@ export function useBootstrapAppStore(): void {
       appStore.patch({
         petState: payload.currentState.state,
         agentMessages: payload.messages,
+        taskNotifications: payload.notifications ?? [],
+        taskAttention: payload.attention ?? null,
       });
     });
 
@@ -232,6 +238,10 @@ export function useLoadState(): {
 
 export function usePetState(): PetStateId {
   return useAppSlice((s) => s.petState);
+}
+
+export function useTaskAttention(): TaskAttention | null {
+  return useAppSlice((s) => s.taskAttention);
 }
 
 export function useAgentMessages(): AgentMessage[] {

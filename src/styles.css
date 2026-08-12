@@ -99,7 +99,8 @@ select {
   height: min(var(--scaled-frame-height), calc(100vh - 36px));
 }
 
-.pet-agent-messages {
+.pet-agent-messages,
+.pet-task-notifications {
   position: relative;
   display: grid;
   justify-self: center;
@@ -123,7 +124,8 @@ select {
   -webkit-user-select: none;
 }
 
-.pet-agent-messages::after {
+.pet-agent-messages::after,
+.pet-task-notifications::after {
   content: "";
   position: absolute;
   bottom: -5px;
@@ -147,6 +149,47 @@ select {
   padding: 2px 4px;
   border-radius: 4px;
   transition: background 120ms ease;
+}
+
+.pet-task-notification {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  margin: 0 -4px;
+  padding: 3px 22px 3px 4px;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: background 120ms ease;
+}
+
+.pet-task-notification:hover,
+.pet-task-notification:focus-visible {
+  background: hsl(211 94% 50% / 0.08);
+  outline: none;
+}
+
+.pet-task-notification-copy {
+  display: grid;
+  min-width: 0;
+  gap: 1px;
+}
+
+.pet-task-notification-status,
+.pet-task-notification-title {
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  text-overflow: ellipsis;
+}
+
+.pet-task-notification-status {
+  font-weight: 700;
+}
+
+.pet-task-notification-title {
+  color: hsl(var(--muted-foreground));
+  white-space: nowrap;
 }
 
 .pet-agent-message:hover {
@@ -196,7 +239,9 @@ select {
 }
 
 .pet-agent-message:hover .pet-agent-message-dismiss,
-.pet-agent-message:focus-within .pet-agent-message-dismiss {
+.pet-agent-message:focus-within .pet-agent-message-dismiss,
+.pet-task-notification:hover .pet-agent-message-dismiss,
+.pet-task-notification:focus-within .pet-agent-message-dismiss {
   opacity: 1;
 }
 
