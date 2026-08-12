@@ -1,8 +1,8 @@
 <div align="center">
   <img src="./public/pet.png" alt="CoPet logo" width="120" />
   <h1>CoPet</h1>
-  <p><strong>给 AI Agent 会话配一只会动的桌面宠物。</strong></p>
-  <p>CoPet 使用兼容 Codex 的宠物包，实时感知 Codex 的提示、工具调用、等待、完成与错误状态，让宠物在桌面上跟着工作节奏做出反应。</p>
+  <p><strong>给 Codex 配一只安静常驻的桌面宠物。</strong></p>
+  <p>CoPet 使用兼容 Codex 的宠物包，以静态形象常驻桌面，并把任务完成、等待与失败状态变成可操作提醒。</p>
 </div>
 
 ![CoPet](./public/banner.zh.png)
@@ -46,13 +46,13 @@
 
 ## 主要功能
 
-- 宠物会实时响应 Agent 的提示、工具调用、等待、完成和错误状态。
+- 宠物固定显示静态帧，可拖拽调整位置；短按宠物会打开 Codex，拖拽不会误打开。
 - 首版专注支持 Codex，并在首次启动时自动安装可用的 Codex Hook。
 - Codex 任务完成或等待操作时显示独立提醒；点击提醒可返回对应任务。
+- 在 macOS 上，Codex 成为前台应用后会自动清除全部完成提醒，同时保留等待和失败提醒。
 - 自带多款宠物，也可以导入兼容 Codex 的宠物包。
-- 互动丰富：悬停、单击、双击、快速连击抚摸、长按、拖拽反应，以及原生右键菜单。
-- 支持全局音效包，也支持宠物自带的交互音效和 Agent 状态音效。
-- 可在设置页和托盘中调整宠物尺寸、启动动画、Agent 消息显示方式、hooks、音效、语言、显示状态和窗口位置。
+- 支持长按和原生右键菜单。
+- 可在设置页和托盘中调整宠物尺寸、Agent 消息显示方式、hooks、语言、显示状态和窗口位置。
 - Agent 消息既可以只显示最新一条，也可以同时保留多条更新。
 - 数据默认留在本机，存放于 `~/.copet`；hook 写入会先备份、再原子写入，且不包含遥测。
 
@@ -106,7 +106,7 @@ $skill-installer install all CoPet skills from https://github.com/ChanceYu/CoPet
 
 ## Codex 任务提醒
 
-CoPet 首版只在设置页暴露 Codex 集成，配置路径为 `~/.codex/hooks.json` 和 `~/.codex/config.toml`。任务结束后宠物会显示“任务完成啦，快去看看吧。”；未处理提醒可在重启后恢复，但不会重复播放庆祝音效。
+CoPet 首版只在设置页暴露 Codex 集成，配置路径为 `~/.codex/hooks.json` 和 `~/.codex/config.toml`。任务结束后宠物会显示“任务完成啦，快去看看吧。”；短按宠物可直接打开 Codex。在 macOS 上，Codex 成为前台后会清除全部完成提醒，但保留等待和失败提醒。
 
 详细行为、排障和验收步骤见 [Codex 任务提醒说明](./docs/codex-task-reminders.md)。
 

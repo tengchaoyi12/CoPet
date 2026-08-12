@@ -1,8 +1,8 @@
 <div align="center">
   <img src="./public/pet.png" alt="CoPet logo" width="120" />
   <h1>CoPet</h1>
-  <p><strong>A living desktop companion for every AI Agent.</strong></p>
-  <p>Powered by Codex-compatible pet packages, CoPet reacts in real time to Codex prompts, tool use, waiting, errors, and completions.</p>
+  <p><strong>A quiet desktop companion for Codex.</strong></p>
+  <p>Powered by Codex-compatible pet packages, CoPet stays visible as a static companion and turns task completion, waiting, and failure states into actionable reminders.</p>
 </div>
 
 ![CoPet](./public/banner.png)
@@ -46,13 +46,13 @@ Built with Tauri, Rust, and React. Lightweight, local-first, no cloud.
 
 ## Features
 
-- Real-time pet reactions to Agent prompts, tool use, waiting, completion, and errors.
+- The pet stays on a static frame, remains draggable, and opens Codex on a short press without misfiring during a drag.
 - The first release focuses on Codex and automatically installs its hook when Codex is available.
 - Separate actionable reminders appear when Codex tasks complete or need input.
+- On macOS, bringing Codex to the foreground clears all completed reminders while preserving waiting and failed reminders.
 - Built-in pets plus import support for Codex-compatible pet packages.
-- Rich pet interactions: hover, click, double-click, rapid-click petting, long-press, drag reactions, and native context menu.
-- Global and per-pet sound packs for interactions and Agent states.
-- Settings and tray controls for pet size, pet launch animation on app startup, Agent message display mode, hooks, sounds, language, visibility, and window position.
+- Long-press and native context-menu controls remain available.
+- Settings and tray controls cover pet size, Agent message display mode, hooks, language, visibility, and window position.
 - Agent messages can show only the latest update or keep multiple Agent updates visible at once.
 - Local-first data model in `~/.copet`, with safe hook backups, atomic writes, and no telemetry.
 
@@ -106,7 +106,7 @@ Restart Codex if the newly installed Skills do not appear.
 
 ## Codex task reminders
 
-The first release exposes only the Codex integration. Its hook configuration lives in `~/.codex/hooks.json` and `~/.codex/config.toml`. Unread task reminders survive a CoPet restart without replaying celebration sounds.
+The first release exposes only the Codex integration. Its hook configuration lives in `~/.codex/hooks.json` and `~/.codex/config.toml`. Short-press the pet to open Codex. On macOS, activating Codex clears completed reminders while keeping waiting and failed reminders.
 
 See [Codex task reminders](./docs/codex-task-reminders.md) for behavior, troubleshooting, and acceptance steps.
 
