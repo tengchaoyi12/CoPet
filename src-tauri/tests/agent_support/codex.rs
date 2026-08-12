@@ -1,5 +1,5 @@
 use super::helpers::{manager_with_fake_agents, read_json};
-use copet_lib::agents::AgentManager;
+use copet_lib::agents::{default_executable_search_paths, AgentManager};
 use std::{
     fs,
     io::{Read, Write},
@@ -10,6 +10,16 @@ use std::{
 };
 
 static PROXY_ENV_LOCK: Mutex<()> = Mutex::new(());
+
+#[cfg(target_os = "macos")]
+#[test]
+fn default_search_paths_include_codex_desktop_bundled_cli() {
+    let paths = default_executable_search_paths(std::path::Path::new("/tmp/copet-home"));
+
+    assert!(paths.contains(&std::path::PathBuf::from(
+        "/Applications/ChatGPT.app/Contents/Resources"
+    )));
+}
 
 fn capture_codex_helper_request(kind: &str, input: &str) -> String {
     let temp = tempfile::tempdir().unwrap();
@@ -354,7 +364,7 @@ fn install_rejects_missing_local_agent_cli_without_writing_hooks() {
     let temp = tempfile::tempdir().unwrap();
     let home = temp.path().join("home");
     let root = temp.path().join(".copet");
-    let manager = AgentManager::new_with_executable_search_paths(&root, &home, Vec::new());
+    let manager = AgentManager::new_with_exact_executable_search_paths(&root, &home, Vec::new());
 
     let error = manager.install("codex").unwrap_err().to_string();
 

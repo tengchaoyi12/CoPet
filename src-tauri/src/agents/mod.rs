@@ -760,7 +760,7 @@ fn executable_candidates(name: &str) -> Vec<String> {
 }
 
 fn executable_search_paths_with_defaults(home: &Path, mut paths: Vec<PathBuf>) -> Vec<PathBuf> {
-    for path in common_executable_search_paths(home) {
+    for path in default_executable_search_paths(home) {
         if !paths.iter().any(|existing| existing == &path) {
             paths.push(path);
         }
@@ -768,8 +768,8 @@ fn executable_search_paths_with_defaults(home: &Path, mut paths: Vec<PathBuf>) -
     paths
 }
 
-fn common_executable_search_paths(home: &Path) -> Vec<PathBuf> {
-    vec![
+pub fn default_executable_search_paths(home: &Path) -> Vec<PathBuf> {
+    let mut paths = vec![
         home.join(".local/bin"),
         home.join(".cargo/bin"),
         home.join(".opencode/bin"),
@@ -787,7 +787,14 @@ fn common_executable_search_paths(home: &Path) -> Vec<PathBuf> {
         PathBuf::from("/usr/bin"),
         PathBuf::from("/bin"),
         PathBuf::from("/opt/local/bin"),
-    ]
+    ];
+
+    #[cfg(target_os = "macos")]
+    paths.push(PathBuf::from(
+        "/Applications/ChatGPT.app/Contents/Resources",
+    ));
+
+    paths
 }
 
 fn is_executable_file(path: &Path) -> bool {
