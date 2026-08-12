@@ -33,6 +33,7 @@ async function shortPress(page: import("@playwright/test").Page, pointerId = 1) 
       new PointerEvent("pointerup", { button: 0, pointerId: id }),
     );
   }, pointerId);
+  await spriteFrame.dispatchEvent("click", { button: 0, detail: 1 });
 }
 
 async function dragPet(
@@ -135,6 +136,24 @@ test("短按宠物调用 open_codex", async ({ browser }) => {
     command: "open_codex",
     args: {},
   });
+  expect(harness.invocations("plugin:window|start_dragging")).toHaveLength(0);
+});
+
+test("macOS 按下但尚未移动时不启动原生拖拽", async ({ browser }) => {
+  const harness = await createAppHarness(browser, { state: staticPetState });
+  const page = await harness.openPage("pet");
+
+  await page.locator(".pet-sprite-frame").dispatchEvent("pointerdown", {
+    button: 0,
+    clientX: 50,
+    clientY: 50,
+    isPrimary: true,
+    pointerId: 1,
+    pointerType: "mouse",
+  });
+  await page.waitForTimeout(100);
+
+  expect(harness.invocations("plugin:window|start_dragging")).toHaveLength(0);
 });
 
 test("双击宠物只调用一次 open_codex", async ({ browser }) => {
@@ -152,9 +171,50 @@ test("双击宠物只调用一次 open_codex", async ({ browser }) => {
 test("拖拽超过阈值不会调用 open_codex", async ({ browser }) => {
   const harness = await createAppHarness(browser, { state: staticPetState });
   const page = await harness.openPage("pet");
+  const spriteFrame = page.locator(".pet-sprite-frame");
 
   await dragPet(page, 40);
+  await spriteFrame.dispatchEvent("click", { button: 0, detail: 1 });
   await page.waitForTimeout(100);
+
+  expect(harness.invocations("plugin:window|start_dragging")).toHaveLength(1);
+  expect(harness.calls.filter((call) => call.command === "open_codex")).toHaveLength(0);
+});
+
+test("Windows 窗口坐标延迟返回时快速拖拽也不会打开 Codex", async ({ browser }) => {
+  const harness = await createAppHarness(browser, {
+    state: staticPetState,
+    userAgent:
+      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/148.0.0.0 Safari/537.36",
+    commandDelayMs: { "plugin:window|outer_position": 200 },
+  });
+  const page = await harness.openPage("pet");
+  const spriteFrame = page.locator(".pet-sprite-frame");
+
+  await spriteFrame.dispatchEvent("pointerdown", {
+    button: 0,
+    clientX: 50,
+    clientY: 50,
+    screenX: 50,
+    screenY: 50,
+    isPrimary: true,
+    pointerId: 1,
+    pointerType: "mouse",
+  });
+  await page.evaluate(() => {
+    window.dispatchEvent(
+      new PointerEvent("pointermove", {
+        clientX: 90,
+        clientY: 50,
+        screenX: 90,
+        screenY: 50,
+        pointerId: 1,
+      }),
+    );
+    window.dispatchEvent(new PointerEvent("pointerup", { pointerId: 1 }));
+  });
+  await spriteFrame.dispatchEvent("click", { button: 0, detail: 1 });
+  await page.waitForTimeout(250);
 
   expect(harness.calls.filter((call) => call.command === "open_codex")).toHaveLength(0);
 });

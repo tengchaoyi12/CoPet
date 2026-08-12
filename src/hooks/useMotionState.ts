@@ -1,6 +1,9 @@
 import { PhysicalPosition } from "@tauri-apps/api/dpi";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
-import type { PointerEvent as ReactPointerEvent } from "react";
+import type {
+  MouseEvent as ReactMouseEvent,
+  PointerEvent as ReactPointerEvent,
+} from "react";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import type { MotionState } from "../lib/petAnimation";
@@ -14,6 +17,7 @@ const PRIMARY_ACTION_DEDUP_MS = 500;
 const PRIMARY_ACTION_MAX_HOLD_MS = 800;
 
 export type MotionHandlers = {
+  onClick: (event: ReactMouseEvent<HTMLElement>) => void;
   onPointerDown: (event: ReactPointerEvent<HTMLElement>) => void;
 };
 
@@ -39,16 +43,19 @@ export function useMotionState(opts?: {
   });
   // Windows-only: programmatic drag state
   const winDragRef = useRef<{
-    baseX: number;
-    baseY: number;
+    pointerId: number;
+    baseX: number | null;
+    baseY: number | null;
     accumX: number;
     accumY: number;
     lastScreenX: number;
     lastScreenY: number;
   } | null>(null);
   const dragDistanceRef = useRef(0);
+  const nativeDragStartedRef = useRef(false);
   const pointerSequenceActiveRef = useRef(false);
   const pointerSequenceStartedAtMsRef = useRef(0);
+  const suppressPrimaryClickRef = useRef(false);
   const lastPrimaryActionAtMsRef = useRef(Number.NEGATIVE_INFINITY);
   const rafRef = useRef(0);
   const onDragLandRef = useRef(opts?.onDragLand);
@@ -66,7 +73,7 @@ export function useMotionState(opts?: {
     setLastActivityAtMs(Date.now());
   }, []);
 
-  const finishPointerSequence = useCallback((allowPrimaryAction: boolean) => {
+  const finishPointerSequence = useCallback((allowPrimaryClick: boolean) => {
     if (!pointerSequenceActiveRef.current) {
       return;
     }
@@ -76,7 +83,12 @@ export function useMotionState(opts?: {
     dragDistanceRef.current = 0;
     dragPointerRef.current = null;
     nativeDragRef.current = { lastX: null, lastY: null };
+    nativeDragStartedRef.current = false;
     winDragRef.current = null;
+    suppressPrimaryClickRef.current =
+      !allowPrimaryClick ||
+      total >= pointerMoveJitterThreshold ||
+      heldForMs >= PRIMARY_ACTION_MAX_HOLD_MS;
     if (rafRef.current) {
       cancelAnimationFrame(rafRef.current);
       rafRef.current = 0;
@@ -85,18 +97,27 @@ export function useMotionState(opts?: {
     if (total >= DRAG_LAND_THRESHOLD_PX) {
       onDragLandRef.current?.();
     }
-    if (
-      allowPrimaryAction &&
-      total < pointerMoveJitterThreshold &&
-      heldForMs < PRIMARY_ACTION_MAX_HOLD_MS
-    ) {
-      const now = Date.now();
-      if (now - lastPrimaryActionAtMsRef.current >= PRIMARY_ACTION_DEDUP_MS) {
-        lastPrimaryActionAtMsRef.current = now;
-        onPrimaryActionRef.current?.();
-      }
-    }
   }, []);
+
+  const onPrimaryClick = useCallback(
+    (event: ReactMouseEvent<HTMLElement>) => {
+      if (event.button !== 0) return;
+      if (pointerSequenceActiveRef.current) {
+        finishPointerSequence(true);
+      }
+      const suppress = suppressPrimaryClickRef.current;
+      suppressPrimaryClickRef.current = false;
+      if (suppress) return;
+
+      const now = Date.now();
+      if (now - lastPrimaryActionAtMsRef.current < PRIMARY_ACTION_DEDUP_MS) {
+        return;
+      }
+      lastPrimaryActionAtMsRef.current = now;
+      onPrimaryActionRef.current?.();
+    },
+    [finishPointerSequence],
+  );
 
   // ── macOS: native startDragging + tauri://move listener ──
   const onPointerDownMac = useCallback(
@@ -109,9 +130,10 @@ export function useMotionState(opts?: {
         lastClientY: event.clientY,
       };
       nativeDragRef.current = { lastX: null, lastY: null };
+      nativeDragStartedRef.current = false;
       dragDistanceRef.current = 0;
+      suppressPrimaryClickRef.current = false;
       notifyActivity();
-      void getCurrentWebviewWindow().startDragging();
     },
     [notifyActivity],
   );
@@ -123,20 +145,34 @@ export function useMotionState(opts?: {
       pointerSequenceActiveRef.current = true;
       pointerSequenceStartedAtMsRef.current = Date.now();
       (event.target as HTMLElement).setPointerCapture(event.pointerId);
+      winDragRef.current = {
+        pointerId: event.pointerId,
+        baseX: null,
+        baseY: null,
+        accumX: 0,
+        accumY: 0,
+        lastScreenX: event.screenX,
+        lastScreenY: event.screenY,
+      };
       void getCurrentWebviewWindow().outerPosition().then((pos) => {
-        if (!pointerSequenceActiveRef.current) {
+        const drag = winDragRef.current;
+        if (
+          !pointerSequenceActiveRef.current ||
+          !drag ||
+          drag.pointerId !== event.pointerId
+        ) {
           return;
         }
-        winDragRef.current = {
-          baseX: pos.x,
-          baseY: pos.y,
-          accumX: 0,
-          accumY: 0,
-          lastScreenX: event.screenX,
-          lastScreenY: event.screenY,
-        };
+        drag.baseX = pos.x + drag.accumX;
+        drag.baseY = pos.y + drag.accumY;
+        drag.accumX = 0;
+        drag.accumY = 0;
+        void getCurrentWebviewWindow().setPosition(
+          new PhysicalPosition(drag.baseX, drag.baseY),
+        );
       });
       dragDistanceRef.current = 0;
+      suppressPrimaryClickRef.current = false;
       setState({ kind: "dragging", direction: "still" });
       notifyActivity();
     },
@@ -157,24 +193,31 @@ export function useMotionState(opts?: {
       pointer.lastClientX = event.clientX;
       pointer.lastClientY = event.clientY;
       dragDistanceRef.current += Math.hypot(deltaX, deltaY);
-      if (
-        dragDistanceRef.current >= pointerMoveJitterThreshold &&
-        deltaX !== 0
-      ) {
-        setState({ kind: "dragging", direction: deltaX > 0 ? "right" : "left" });
+      if (dragDistanceRef.current >= pointerMoveJitterThreshold) {
+        suppressPrimaryClickRef.current = true;
+        if (deltaX !== 0) {
+          setState({ kind: "dragging", direction: deltaX > 0 ? "right" : "left" });
+        }
+        if (!nativeDragStartedRef.current) {
+          nativeDragStartedRef.current = true;
+          void getCurrentWebviewWindow()
+            .startDragging()
+            .then(() => finishPointerSequence(true))
+            .catch(() => finishPointerSequence(false));
+        }
       }
     };
 
-    const endWithPrimaryAction = () => finishPointerSequence(true);
+    const endWithPrimaryClick = () => finishPointerSequence(true);
     const cancel = () => finishPointerSequence(false);
 
     window.addEventListener("pointermove", handlePointerMove);
-    window.addEventListener("pointerup", endWithPrimaryAction);
+    window.addEventListener("pointerup", endWithPrimaryClick);
     window.addEventListener("pointercancel", cancel);
     window.addEventListener("blur", cancel);
     return () => {
       window.removeEventListener("pointermove", handlePointerMove);
-      window.removeEventListener("pointerup", endWithPrimaryAction);
+      window.removeEventListener("pointerup", endWithPrimaryClick);
       window.removeEventListener("pointercancel", cancel);
       window.removeEventListener("blur", cancel);
     };
@@ -226,6 +269,7 @@ export function useMotionState(opts?: {
       rafRef.current = 0;
       const drag = winDragRef.current;
       if (!drag) return;
+      if (drag.baseX === null || drag.baseY === null) return;
       const ax = drag.accumX;
       const ay = drag.accumY;
       if (ax === 0 && ay === 0) return;
@@ -273,7 +317,7 @@ export function useMotionState(opts?: {
 
   return {
     state,
-    handlers: { onPointerDown },
+    handlers: { onClick: onPrimaryClick, onPointerDown },
     notifyActivity,
     lastActivityAtMs,
   };

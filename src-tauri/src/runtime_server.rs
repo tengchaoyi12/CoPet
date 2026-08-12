@@ -428,6 +428,7 @@ impl RuntimeCore {
 
     pub fn clear_completed_task_notifications(&mut self) -> RuntimeUpdate {
         let changed = self.task_notifications.clear_completed();
+        self.messages.retain(|message| !message.is_completion);
         if changed > 0 {
             self.save_task_notifications(now_ms());
         }
@@ -598,6 +599,8 @@ pub struct AgentMessage {
     pub display_name: String,
     pub text: String,
     pub updated_at_ms: u64,
+    #[serde(skip)]
+    is_completion: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
@@ -629,6 +632,7 @@ fn agent_message_for_event(event: &RuntimeEvent, now_ms: u64) -> Option<AgentMes
         display_name: agent_display_name(&event.agent).to_string(),
         text,
         updated_at_ms: now_ms,
+        is_completion: is_session_stop_kind(&event.kind),
     })
 }
 

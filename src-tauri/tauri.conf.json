@@ -29,6 +29,7 @@
         "decorations": false,
         "skipTaskbar": true,
         "focusable": false,
+        "acceptFirstMouse": true,
         "visibleOnAllWorkspaces": true
       },
       {

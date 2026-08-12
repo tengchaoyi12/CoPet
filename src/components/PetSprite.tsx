@@ -1,5 +1,9 @@
 import { convertFileSrc } from "@tauri-apps/api/core";
-import type { CSSProperties, PointerEvent as ReactPointerEvent } from "react";
+import type {
+  CSSProperties,
+  MouseEvent as ReactMouseEvent,
+  PointerEvent as ReactPointerEvent,
+} from "react";
 
 import type { PetStateId, PetSummary } from "../lib/appTypes";
 import type { ComposedView } from "../lib/petAnimation";
@@ -30,11 +34,13 @@ export function PetSprite({
   const handlePointerEnter = inputHandlers?.onPointerEnter;
   const handlePointerMove = inputHandlers?.onPointerMove;
   const handlePointerLeave = inputHandlers?.onPointerLeave;
-  const handleClick = inputHandlers?.onClick;
+  const handleClick = (event: ReactMouseEvent<HTMLElement>) => {
+    inputHandlers?.onClick(event);
+    motionHandlers?.onClick(event);
+  };
   const handleDoubleClick = inputHandlers?.onDoubleClick;
 
-  // Run input first so the long-press position ref is set before motion's
-  // OS-level startDragging() consumes the pointer.
+  // 先记录长按起点，再初始化移动序列；只有越过阈值才启动系统拖拽。
   const handlePointerDown = (event: ReactPointerEvent<HTMLElement>) => {
     inputHandlers?.onPointerDownHold?.(event);
     motionHandlers?.onPointerDown?.(event);

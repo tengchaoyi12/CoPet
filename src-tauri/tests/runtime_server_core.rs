@@ -1060,6 +1060,57 @@ fn clear_completed_task_notifications_keeps_waiting_and_failed() {
 }
 
 #[test]
+fn clear_completed_task_notifications_removes_only_legacy_completion_messages() {
+    let mut completed = RuntimeCore::new("secret".to_string());
+    completed
+        .handle_event(
+            Some("Bearer secret"),
+            codex_event("user.prompt", "completed", "turn-1"),
+            100,
+        )
+        .unwrap();
+    completed
+        .handle_event(
+            Some("Bearer secret"),
+            codex_event("session.stop", "completed", "turn-1"),
+            200,
+        )
+        .unwrap();
+    assert_eq!(completed.status().messages[0].text, "Done.");
+
+    let update = completed.clear_completed_task_notifications();
+
+    assert!(update.notifications.is_empty());
+    assert!(update.messages.is_empty());
+
+    let mut waiting = RuntimeCore::new("secret".to_string());
+    waiting
+        .handle_event(
+            Some("Bearer secret"),
+            codex_event("permission.waiting", "waiting", "turn-2"),
+            300,
+        )
+        .unwrap();
+    assert_eq!(
+        waiting.clear_completed_task_notifications().messages[0].text,
+        "Waiting for you..."
+    );
+
+    let mut failed = RuntimeCore::new("secret".to_string());
+    failed
+        .handle_event(
+            Some("Bearer secret"),
+            codex_event("session.error", "failed", "turn-3"),
+            400,
+        )
+        .unwrap();
+    assert_eq!(
+        failed.clear_completed_task_notifications().messages[0].text,
+        "Error."
+    );
+}
+
+#[test]
 fn clear_completed_task_notifications_persists_retained_notifications() {
     let temp = tempfile::tempdir().unwrap();
     let path = temp.path().join("task-notifications.json");

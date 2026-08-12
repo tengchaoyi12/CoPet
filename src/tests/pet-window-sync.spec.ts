@@ -118,12 +118,29 @@ test("pet window exposes a draggable Tauri region while keeping settings clickab
 
   await page.locator(".pet-sprite-frame").dispatchEvent("pointerdown", {
     button: 0,
+    clientX: 20,
+    clientY: 20,
+    pointerId: 1,
     pointerType: "mouse",
   });
-  expect(harness.calls).toContainEqual({
-    command: "plugin:window|start_dragging",
-    args: { label: "pet" },
+  expect(harness.invocations("plugin:window|start_dragging")).toHaveLength(0);
+  await page.evaluate(() => {
+    window.dispatchEvent(
+      new PointerEvent("pointermove", {
+        clientX: 40,
+        clientY: 20,
+        pointerId: 1,
+      }),
+    );
   });
+  await expect
+    .poll(() => harness.invocations("plugin:window|start_dragging"))
+    .toEqual([
+      {
+        command: "plugin:window|start_dragging",
+        args: { label: "pet" },
+      },
+    ]);
 });
 
 test("right-clicking the pet opens the native menu without resizing or repositioning", async ({
