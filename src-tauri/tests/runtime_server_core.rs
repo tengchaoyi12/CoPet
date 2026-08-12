@@ -2,10 +2,13 @@ use copet_lib::{
     diagnostics::RotatingLog,
     runtime_server::{handle_http_request, RuntimeCore, RuntimeServerError, RuntimeToken},
     runtime_state::{normalize_runtime_event, PetStateId, RuntimeEvent},
-    task_notifications::AttentionKind,
+    task_notifications::{AttentionKind, TaskNotificationStore, TaskStatus},
 };
 use serde_json::json;
-use std::fs;
+use std::{
+    fs,
+    time::{SystemTime, UNIX_EPOCH},
+};
 
 #[test]
 fn runtime_event_accepts_codex_task_fields() {
@@ -1012,6 +1015,118 @@ fn dismiss_task_notification_removes_only_selected_notification() {
     assert_eq!(update.notifications[0].id, "codex:thread-2:turn-2");
 }
 
+#[test]
+fn clear_completed_task_notifications_keeps_waiting_and_failed() {
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("task-notifications.json");
+    let now_ms = test_now_ms();
+    let mut core = RuntimeCore::new("secret".to_string())
+        .with_task_notifications(TaskNotificationStore::default(), path);
+    core.handle_event(
+        Some("Bearer secret"),
+        codex_event("session.stop", "completed", "turn-1"),
+        now_ms,
+    )
+    .unwrap();
+    core.handle_event(
+        Some("Bearer secret"),
+        codex_event("permission.waiting", "waiting", "turn-2"),
+        now_ms + 1,
+    )
+    .unwrap();
+    core.handle_event(
+        Some("Bearer secret"),
+        codex_event("session.error", "failed", "turn-3"),
+        now_ms + 2,
+    )
+    .unwrap();
+
+    let update = core.clear_completed_task_notifications();
+
+    assert_eq!(update.notifications.len(), 2);
+    assert!(update
+        .notifications
+        .iter()
+        .all(|item| item.status != TaskStatus::Completed));
+    assert!(update
+        .notifications
+        .iter()
+        .any(|item| item.status == TaskStatus::Waiting));
+    assert!(update
+        .notifications
+        .iter()
+        .any(|item| item.status == TaskStatus::Failed));
+    assert!(update.attention.is_none());
+}
+
+#[test]
+fn clear_completed_task_notifications_persists_retained_notifications() {
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("task-notifications.json");
+    let now_ms = test_now_ms();
+    let mut core = RuntimeCore::new("secret".to_string())
+        .with_task_notifications(TaskNotificationStore::default(), path.clone());
+    core.handle_event(
+        Some("Bearer secret"),
+        codex_event("session.stop", "completed", "turn-1"),
+        now_ms,
+    )
+    .unwrap();
+    core.handle_event(
+        Some("Bearer secret"),
+        codex_event("permission.waiting", "waiting", "turn-2"),
+        now_ms + 1,
+    )
+    .unwrap();
+    core.handle_event(
+        Some("Bearer secret"),
+        codex_event("session.error", "failed", "turn-3"),
+        now_ms + 2,
+    )
+    .unwrap();
+
+    core.clear_completed_task_notifications();
+
+    let restored = TaskNotificationStore::load(&path, now_ms + 3).unwrap();
+    let visible = restored.visible();
+    assert_eq!(visible.len(), 2);
+    assert!(visible
+        .iter()
+        .all(|item| item.status != TaskStatus::Completed));
+    assert!(visible
+        .iter()
+        .any(|item| item.status == TaskStatus::Waiting));
+    assert!(visible.iter().any(|item| item.status == TaskStatus::Failed));
+}
+
+#[test]
+fn clear_completed_task_notifications_is_idempotent() {
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("task-notifications.json");
+    let now_ms = test_now_ms();
+    let mut core = RuntimeCore::new("secret".to_string())
+        .with_task_notifications(TaskNotificationStore::default(), path.clone());
+    core.handle_event(
+        Some("Bearer secret"),
+        codex_event("session.stop", "completed", "turn-1"),
+        now_ms,
+    )
+    .unwrap();
+    core.handle_event(
+        Some("Bearer secret"),
+        codex_event("session.error", "failed", "turn-2"),
+        now_ms + 1,
+    )
+    .unwrap();
+
+    let first = core.clear_completed_task_notifications();
+    let persisted_after_first = fs::read(&path).unwrap();
+    let second = core.clear_completed_task_notifications();
+
+    assert_eq!(second, first);
+    assert_eq!(fs::read(&path).unwrap(), persisted_after_first);
+}
+
 fn codex_event(kind: &str, session_id: &str, turn_id: &str) -> RuntimeEvent {
     RuntimeEvent {
         agent: "codex".to_string(),
@@ -1024,4 +1139,11 @@ fn codex_event(kind: &str, session_id: &str, turn_id: &str) -> RuntimeEvent {
         summary: None,
         timestamp: None,
     }
+}
+
+fn test_now_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_millis() as u64
 }

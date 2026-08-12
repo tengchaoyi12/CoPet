@@ -233,6 +233,13 @@ impl RuntimeManager {
             .clear_agent_messages(agent)
     }
 
+    pub fn clear_completed_task_notifications(&self) -> RuntimeUpdate {
+        self.core
+            .lock()
+            .expect("runtime core poisoned")
+            .clear_completed_task_notifications()
+    }
+
     pub fn open_task_notification(&self, id: &str) -> Result<RuntimeUpdate, String> {
         self.core
             .lock()
@@ -416,26 +423,30 @@ impl RuntimeCore {
     pub fn clear_agent_messages(&mut self, agent: &str) -> RuntimeUpdate {
         self.messages.retain(|message| message.agent != agent);
         self.active_agents.remove(agent);
-        RuntimeUpdate {
-            current_state: self.current_state(),
-            messages: self.messages.clone(),
-            notifications: self
-                .task_notifications
-                .visible()
-                .into_iter()
-                .cloned()
-                .collect(),
-            attention: None,
+        self.runtime_update(None)
+    }
+
+    pub fn clear_completed_task_notifications(&mut self) -> RuntimeUpdate {
+        let changed = self.task_notifications.clear_completed();
+        if changed > 0 {
+            self.save_task_notifications(now_ms());
         }
+        self.latest_attention = None;
+        self.runtime_update(None)
     }
 
     pub fn take_update(&mut self) -> RuntimeUpdate {
+        let attention = self.latest_attention.take();
+        self.runtime_update(attention)
+    }
+
+    fn runtime_update(&self, attention: Option<TaskAttention>) -> RuntimeUpdate {
         let status = self.status();
         RuntimeUpdate {
             current_state: status.current_state,
             messages: status.messages,
             notifications: status.notifications,
-            attention: self.latest_attention.take(),
+            attention,
         }
     }
 
