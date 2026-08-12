@@ -116,7 +116,7 @@ test("pet window exposes a draggable Tauri region while keeping settings clickab
   );
   await expect(page.getByRole("button", { name: "Open settings" })).toHaveCount(0);
 
-  await page.locator("main.pet-window").dispatchEvent("pointerdown", {
+  await page.locator(".pet-sprite-frame").dispatchEvent("pointerdown", {
     button: 0,
     pointerType: "mouse",
   });
@@ -1202,7 +1202,7 @@ test("shrinking the size slider renders the smaller pet before shrinking the win
     .toBeGreaterThan(maxWindowSetSizeCalls);
 });
 
-test("dragging the pet window switches the pet into directional running states", async ({
+test("dragging the pet window keeps the pet static", async ({
   browser,
 }) => {
   const harness = await createAppHarness(browser, {
@@ -1213,12 +1213,12 @@ test("dragging the pet window switches the pet into directional running states",
     },
   });
   const page = await harness.openPage("pet");
-  const petWindow = page.locator("main.pet-window");
+  const spriteFrame = page.locator(".pet-sprite-frame");
   const sprite = page.locator(".pet-sprite");
 
   await expect(sprite).toHaveAttribute("data-pet-state", "idle");
 
-  await petWindow.dispatchEvent("pointerdown", {
+  await spriteFrame.dispatchEvent("pointerdown", {
     button: 0,
     clientX: 20,
     clientY: 20,
@@ -1231,7 +1231,7 @@ test("dragging the pet window switches the pet into directional running states",
     pointerId: 1,
     pointerType: "mouse",
   });
-  await expect(sprite).toHaveAttribute("data-pet-state", "running-right");
+  await expect(sprite).toHaveAttribute("data-pet-state", "idle");
 
   await page.dispatchEvent("body", "pointermove", {
     clientX: 30,
@@ -1239,7 +1239,7 @@ test("dragging the pet window switches the pet into directional running states",
     pointerId: 1,
     pointerType: "mouse",
   });
-  await expect(sprite).toHaveAttribute("data-pet-state", "running-left");
+  await expect(sprite).toHaveAttribute("data-pet-state", "idle");
 
   await page.dispatchEvent("body", "pointerup", {
     clientX: 30,
@@ -1250,7 +1250,7 @@ test("dragging the pet window switches the pet into directional running states",
   await expect(sprite).toHaveAttribute("data-pet-state", "idle");
 });
 
-test("pet drag animation ignores small pointer jitter", async ({ browser }) => {
+test("pet drag jitter keeps the pet static", async ({ browser }) => {
   const harness = await createAppHarness(browser, {
     state: {
       currentPetId: copet.id,
@@ -1259,10 +1259,10 @@ test("pet drag animation ignores small pointer jitter", async ({ browser }) => {
     },
   });
   const page = await harness.openPage("pet");
-  const petWindow = page.locator("main.pet-window");
+  const spriteFrame = page.locator(".pet-sprite-frame");
   const sprite = page.locator(".pet-sprite");
 
-  await petWindow.dispatchEvent("pointerdown", {
+  await spriteFrame.dispatchEvent("pointerdown", {
     button: 0,
     clientX: 80,
     clientY: 20,
@@ -1275,7 +1275,7 @@ test("pet drag animation ignores small pointer jitter", async ({ browser }) => {
     pointerId: 1,
     pointerType: "mouse",
   });
-  await expect(sprite).toHaveAttribute("data-pet-state", "running-right");
+  await expect(sprite).toHaveAttribute("data-pet-state", "idle");
 
   await page.dispatchEvent("body", "pointermove", {
     clientX: 101,
@@ -1295,7 +1295,7 @@ test("pet drag animation ignores small pointer jitter", async ({ browser }) => {
     pointerId: 1,
     pointerType: "mouse",
   });
-  await expect(sprite).toHaveAttribute("data-pet-state", "running-right");
+  await expect(sprite).toHaveAttribute("data-pet-state", "idle");
 
   await page.dispatchEvent("body", "pointermove", {
     clientX: 84,
@@ -1303,7 +1303,7 @@ test("pet drag animation ignores small pointer jitter", async ({ browser }) => {
     pointerId: 1,
     pointerType: "mouse",
   });
-  await expect(sprite).toHaveAttribute("data-pet-state", "running-left");
+  await expect(sprite).toHaveAttribute("data-pet-state", "idle");
 
   await page.dispatchEvent("body", "pointerup", {
     clientX: 84,
@@ -1314,7 +1314,7 @@ test("pet drag animation ignores small pointer jitter", async ({ browser }) => {
   await expect(sprite).toHaveAttribute("data-pet-state", "idle");
 });
 
-test("pet drag animation follows native window movement direction", async ({
+test("native window movement keeps the pet static", async ({
   browser,
 }) => {
   const harness = await createAppHarness(browser, {
@@ -1325,12 +1325,12 @@ test("pet drag animation follows native window movement direction", async ({
     },
   });
   const page = await harness.openPage("pet");
-  const petWindow = page.locator("main.pet-window");
+  const spriteFrame = page.locator(".pet-sprite-frame");
   const sprite = page.locator(".pet-sprite");
 
   await expect(sprite).toHaveAttribute("data-pet-state", "idle");
 
-  await petWindow.dispatchEvent("pointerdown", {
+  await spriteFrame.dispatchEvent("pointerdown", {
     button: 0,
     clientX: 80,
     clientY: 20,
@@ -1343,12 +1343,12 @@ test("pet drag animation follows native window movement direction", async ({
     window.__copetTestEmit("tauri://move", { x: 120, y: 40 });
     window.__copetTestEmit("tauri://move", { x: 96, y: 40 });
   });
-  await expect(sprite).toHaveAttribute("data-pet-state", "running-left");
+  await expect(sprite).toHaveAttribute("data-pet-state", "idle");
 
   await page.evaluate(() => {
     window.__copetTestEmit("tauri://move", { x: 130, y: 40 });
   });
-  await expect(sprite).toHaveAttribute("data-pet-state", "running-right");
+  await expect(sprite).toHaveAttribute("data-pet-state", "idle");
 
   await page.dispatchEvent("body", "pointerup", {
     clientX: 80,
@@ -1396,7 +1396,7 @@ test("size slider window movement does not change the pet direction animation", 
   await expect(sprite).toHaveAttribute("data-pet-state", "idle");
 });
 
-test("pet drag animation ignores small opposite-direction jitter", async ({
+test("native opposite-direction jitter keeps the pet static", async ({
   browser,
 }) => {
   const harness = await createAppHarness(browser, {
@@ -1407,10 +1407,10 @@ test("pet drag animation ignores small opposite-direction jitter", async ({
     },
   });
   const page = await harness.openPage("pet");
-  const petWindow = page.locator("main.pet-window");
+  const spriteFrame = page.locator(".pet-sprite-frame");
   const sprite = page.locator(".pet-sprite");
 
-  await petWindow.dispatchEvent("pointerdown", {
+  await spriteFrame.dispatchEvent("pointerdown", {
     button: 0,
     clientX: 80,
     clientY: 20,
@@ -1422,19 +1422,19 @@ test("pet drag animation ignores small opposite-direction jitter", async ({
     window.__copetTestEmit("tauri://move", { x: 100, y: 40 });
     window.__copetTestEmit("tauri://move", { x: 120, y: 40 });
   });
-  await expect(sprite).toHaveAttribute("data-pet-state", "running-right");
+  await expect(sprite).toHaveAttribute("data-pet-state", "idle");
 
   await page.evaluate(() => {
     window.__copetTestEmit("tauri://move", { x: 117, y: 40 });
     window.__copetTestEmit("tauri://move", { x: 121, y: 40 });
     window.__copetTestEmit("tauri://move", { x: 116, y: 40 });
   });
-  await expect(sprite).toHaveAttribute("data-pet-state", "running-right");
+  await expect(sprite).toHaveAttribute("data-pet-state", "idle");
 
   await page.evaluate(() => {
     window.__copetTestEmit("tauri://move", { x: 96, y: 40 });
   });
-  await expect(sprite).toHaveAttribute("data-pet-state", "running-left");
+  await expect(sprite).toHaveAttribute("data-pet-state", "idle");
 
   await page.dispatchEvent("body", "pointerup", {
     clientX: 80,
@@ -1633,7 +1633,7 @@ test("pet window renders simultaneous hook activity for all supported agents", a
   await expect(panel.locator('img[alt="Claude Code"]')).toBeVisible();
   await expect(panel.locator('img[alt="Gemini"]')).toBeVisible();
   await expect(panel.locator('img[alt="OpenCode"]')).toBeVisible();
-  await expect(page.locator(".pet-sprite")).toHaveAttribute("data-pet-state", "running");
+  await expect(page.locator(".pet-sprite")).toHaveAttribute("data-pet-state", "idle");
 });
 
 test("pet agent message wraps long text within the bubble", async ({ browser }) => {
