@@ -8,6 +8,9 @@ fn tool_before_with_command(command: &str) -> RuntimeEvent {
         tool: Some("Bash".into()),
         tool_input: Some(json!({ "command": command })),
         session_id: None,
+        turn_id: None,
+        task_title: None,
+        summary: None,
         timestamp: None,
     }
 }
@@ -56,6 +59,9 @@ fn tool_before_without_command_maps_to_running() {
         tool: Some("Edit".into()),
         tool_input: None,
         session_id: None,
+        turn_id: None,
+        task_title: None,
+        summary: None,
         timestamp: None,
     };
     let derived = engine.apply_event(event, 0);
@@ -71,6 +77,9 @@ fn read_tool_still_maps_to_review() {
         tool: Some("Read".into()),
         tool_input: None,
         session_id: None,
+        turn_id: None,
+        task_title: None,
+        summary: None,
         timestamp: None,
     };
     let derived = engine.apply_event(event, 0);

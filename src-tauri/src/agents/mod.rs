@@ -618,6 +618,19 @@ fi
 if [ -z "$tool" ]; then
   tool="$(json_string_field_after_key toolCall name)"
 fi
+session_id="$(json_string_field session_id)"
+if [ -z "$session_id" ]; then
+  session_id="$(json_string_field sessionId)"
+fi
+turn_id="$(json_string_field turn_id)"
+if [ -z "$turn_id" ]; then
+  turn_id="$(json_string_field turnId)"
+fi
+prompt="$(json_string_field prompt)"
+last_assistant_message="$(json_string_field last_assistant_message)"
+if [ -z "$last_assistant_message" ]; then
+  last_assistant_message="$(json_string_field lastAssistantMessage)"
+fi
 tool_input=""
 for field in file_path:file_path filePath:filePath file:file path:path command:command CommandLine:command pattern:pattern url:url description:description subject:subject prompt:subject message:subject error:subject initialPrompt:subject AbsolutePath:filePath TargetFile:filePath DirectoryPath:path SearchDirectory:path SearchPath:path Cwd:path Query:pattern query:pattern Pattern:pattern Url:url Description:description Instruction:subject Prompt:subject Input:subject Message:subject Reason:subject Action:subject Target:subject ImageName:subject; do
   source_key="${field%%:*}"
@@ -644,7 +657,20 @@ if [ -n "$tool" ]; then
   escaped_tool="$(json_escape "$tool")"
   tool_field=",\"tool\":\"$escaped_tool\""
 fi
-payload="$(printf '{"agent":"%s","kind":"%s"%s%s}' "$(json_escape "$agent")" "$(json_escape "$kind")" "$tool_field" "$tool_input")"
+task_fields=""
+if [ -n "$session_id" ]; then
+  task_fields="$task_fields,\"sessionId\":\"$(json_escape "$session_id")\""
+fi
+if [ -n "$turn_id" ]; then
+  task_fields="$task_fields,\"turnId\":\"$(json_escape "$turn_id")\""
+fi
+if [ "$kind" = "user.prompt" ] && [ -n "$prompt" ]; then
+  task_fields="$task_fields,\"taskTitle\":\"$(json_escape "$prompt")\""
+fi
+if [ "$kind" = "session.stop" ] && [ -n "$last_assistant_message" ]; then
+  task_fields="$task_fields,\"summary\":\"$(json_escape "$last_assistant_message")\""
+fi
+payload="$(printf '{"agent":"%s","kind":"%s"%s%s%s}' "$(json_escape "$agent")" "$(json_escape "$kind")" "$tool_field" "$tool_input" "$task_fields")"
 curl -fsS --noproxy '*' --max-time 0.8 -H "Authorization: Bearer $token" -H "Content-Type: application/json" -d "$payload" "$endpoint" >/dev/null 2>&1 || true
 hook_output
 exit 0

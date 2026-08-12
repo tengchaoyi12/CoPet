@@ -1,10 +1,61 @@
 use copet_lib::{
     diagnostics::RotatingLog,
     runtime_server::{handle_http_request, RuntimeCore, RuntimeServerError, RuntimeToken},
-    runtime_state::{PetStateId, RuntimeEvent},
+    runtime_state::{normalize_runtime_event, PetStateId, RuntimeEvent},
 };
 use serde_json::json;
 use std::fs;
+
+#[test]
+fn runtime_event_accepts_codex_task_fields() {
+    let snake_case: RuntimeEvent = serde_json::from_value(json!({
+        "agent": "codex",
+        "kind": "session.stop",
+        "session_id": "thread-123",
+        "turn_id": "turn-456",
+        "task_title": "修复登录按钮",
+        "summary": "已完成登录按钮修复"
+    }))
+    .unwrap();
+    assert_eq!(snake_case.session_id.as_deref(), Some("thread-123"));
+    assert_eq!(snake_case.turn_id.as_deref(), Some("turn-456"));
+    assert_eq!(snake_case.task_title.as_deref(), Some("修复登录按钮"));
+    assert_eq!(snake_case.summary.as_deref(), Some("已完成登录按钮修复"));
+
+    let camel_case: RuntimeEvent = serde_json::from_value(json!({
+        "agent": "codex",
+        "kind": "session.stop",
+        "sessionId": "thread-789",
+        "turnId": "turn-999",
+        "taskTitle": "整理文档",
+        "summary": "文档已整理"
+    }))
+    .unwrap();
+    assert_eq!(camel_case.session_id.as_deref(), Some("thread-789"));
+    assert_eq!(camel_case.turn_id.as_deref(), Some("turn-999"));
+    assert_eq!(camel_case.task_title.as_deref(), Some("整理文档"));
+    assert_eq!(camel_case.summary.as_deref(), Some("文档已整理"));
+}
+
+#[test]
+fn runtime_event_compacts_and_limits_task_text() {
+    let event: RuntimeEvent = serde_json::from_value(json!({
+        "agent": "codex",
+        "kind": "session.stop",
+        "taskTitle": format!("  修复   {}  ", "甲".repeat(80)),
+        "summary": format!("  完成\n{}  ", "乙".repeat(240))
+    }))
+    .unwrap();
+
+    let normalized = normalize_runtime_event(event);
+
+    let title = normalized.task_title.unwrap();
+    let summary = normalized.summary.unwrap();
+    assert!(title.starts_with("修复 "));
+    assert_eq!(title.chars().count(), 80);
+    assert!(summary.starts_with("完成 "));
+    assert_eq!(summary.chars().count(), 240);
+}
 
 #[test]
 fn rotate_writes_a_fresh_runtime_token() {
@@ -57,6 +108,9 @@ fn runtime_core_accepts_authorized_events_and_updates_status() {
                 tool: Some("Read".to_string()),
                 tool_input: None,
                 session_id: None,
+                turn_id: None,
+                task_title: None,
+                summary: None,
                 timestamp: None,
             },
             10,
@@ -81,6 +135,9 @@ fn runtime_core_normalizes_thinking_and_tracks_it_as_agent_activity() {
                 tool: None,
                 tool_input: None,
                 session_id: None,
+                turn_id: None,
+                task_title: None,
+                summary: None,
                 timestamp: None,
             },
             100,
@@ -100,6 +157,9 @@ fn runtime_core_normalizes_thinking_and_tracks_it_as_agent_activity() {
                 tool: None,
                 tool_input: None,
                 session_id: None,
+                turn_id: None,
+                task_title: None,
+                summary: None,
                 timestamp: None,
             },
             200,
@@ -122,6 +182,9 @@ fn runtime_core_tracks_latest_message_per_agent() {
             tool: Some("Read".to_string()),
             tool_input: Some(json!({ "file_path": "/repo/src/App.tsx" })),
             session_id: None,
+            turn_id: None,
+            task_title: None,
+            summary: None,
             timestamp: None,
         },
         100,
@@ -135,6 +198,9 @@ fn runtime_core_tracks_latest_message_per_agent() {
             tool: Some("Bash".to_string()),
             tool_input: Some(json!({ "command": "pnpm test:frontend" })),
             session_id: None,
+            turn_id: None,
+            task_title: None,
+            summary: None,
             timestamp: None,
         },
         200,
@@ -173,6 +239,9 @@ fn runtime_core_clears_messages_for_one_agent() {
             tool: Some("Read".to_string()),
             tool_input: Some(json!({ "file_path": "/repo/src/App.tsx" })),
             session_id: None,
+            turn_id: None,
+            task_title: None,
+            summary: None,
             timestamp: None,
         },
         100,
@@ -186,6 +255,9 @@ fn runtime_core_clears_messages_for_one_agent() {
             tool: Some("Bash".to_string()),
             tool_input: Some(json!({ "command": "pnpm build" })),
             session_id: None,
+            turn_id: None,
+            task_title: None,
+            summary: None,
             timestamp: None,
         },
         200,
@@ -211,6 +283,9 @@ fn runtime_core_includes_prompt_subject_in_user_prompt_message() {
             tool: None,
             tool_input: Some(json!({ "subject": "add copilot cli integration messages" })),
             session_id: None,
+            turn_id: None,
+            task_title: None,
+            summary: None,
             timestamp: None,
         },
         100,
@@ -243,6 +318,9 @@ fn runtime_core_formats_copilot_official_tool_names() {
             tool: Some("view".to_string()),
             tool_input: Some(json!({ "path": "/repo/src/App.tsx" })),
             session_id: None,
+            turn_id: None,
+            task_title: None,
+            summary: None,
             timestamp: None,
         },
         100,
@@ -256,6 +334,9 @@ fn runtime_core_formats_copilot_official_tool_names() {
             tool: Some("web_fetch".to_string()),
             tool_input: Some(json!({ "url": "https://docs.github.com/copilot" })),
             session_id: None,
+            turn_id: None,
+            task_title: None,
+            summary: None,
             timestamp: None,
         },
         200,
@@ -287,6 +368,9 @@ fn runtime_core_keeps_antigravity_tool_detail_when_post_tool_lacks_payload() {
                 "command": "pnpm test:frontend src/tests/settings-workflows.spec.ts"
             })),
             session_id: None,
+            turn_id: None,
+            task_title: None,
+            summary: None,
             timestamp: None,
         },
         100,
@@ -300,6 +384,9 @@ fn runtime_core_keeps_antigravity_tool_detail_when_post_tool_lacks_payload() {
             tool: None,
             tool_input: None,
             session_id: None,
+            turn_id: None,
+            task_title: None,
+            summary: None,
             timestamp: None,
         },
         200,
@@ -333,6 +420,9 @@ fn runtime_core_does_not_create_message_for_stop_without_prior_agent_activity() 
             tool: None,
             tool_input: None,
             session_id: None,
+            turn_id: None,
+            task_title: None,
+            summary: None,
             timestamp: None,
         },
         100,
@@ -361,6 +451,9 @@ fn runtime_core_updates_existing_message_for_stop_after_agent_activity() {
             tool: Some("run_command".to_string()),
             tool_input: Some(json!({ "command": "git commit -m fix-antigravity" })),
             session_id: None,
+            turn_id: None,
+            task_title: None,
+            summary: None,
             timestamp: None,
         },
         100,
@@ -374,6 +467,9 @@ fn runtime_core_updates_existing_message_for_stop_after_agent_activity() {
             tool: None,
             tool_input: None,
             session_id: None,
+            turn_id: None,
+            task_title: None,
+            summary: None,
             timestamp: None,
         },
         200,
@@ -387,6 +483,9 @@ fn runtime_core_updates_existing_message_for_stop_after_agent_activity() {
             tool: None,
             tool_input: None,
             session_id: None,
+            turn_id: None,
+            task_title: None,
+            summary: None,
             timestamp: None,
         },
         300,
@@ -419,6 +518,9 @@ fn runtime_core_suppresses_antigravity_stop_after_prompt_when_cli_never_started(
             tool: None,
             tool_input: Some(json!({ "subject": "git commit" })),
             session_id: None,
+            turn_id: None,
+            task_title: None,
+            summary: None,
             timestamp: None,
         },
         100,
@@ -432,6 +534,9 @@ fn runtime_core_suppresses_antigravity_stop_after_prompt_when_cli_never_started(
             tool: None,
             tool_input: None,
             session_id: None,
+            turn_id: None,
+            task_title: None,
+            summary: None,
             timestamp: None,
         },
         200,
@@ -462,6 +567,9 @@ fn runtime_core_normalizes_agent_aliases_and_raw_cli_event_kinds_for_messages() 
             tool: Some("Bash".to_string()),
             tool_input: Some(json!({ "command": "pnpm build" })),
             session_id: None,
+            turn_id: None,
+            task_title: None,
+            summary: None,
             timestamp: None,
         },
         100,
@@ -475,6 +583,9 @@ fn runtime_core_normalizes_agent_aliases_and_raw_cli_event_kinds_for_messages() 
             tool: Some("Read".to_string()),
             tool_input: Some(json!({ "filePath": "/repo/src/App.tsx" })),
             session_id: None,
+            turn_id: None,
+            task_title: None,
+            summary: None,
             timestamp: None,
         },
         200,
@@ -488,6 +599,9 @@ fn runtime_core_normalizes_agent_aliases_and_raw_cli_event_kinds_for_messages() 
             tool: Some("Read".to_string()),
             tool_input: Some(json!({ "file_path": "/repo/src/lib.rs" })),
             session_id: None,
+            turn_id: None,
+            task_title: None,
+            summary: None,
             timestamp: None,
         },
         300,
@@ -501,6 +615,9 @@ fn runtime_core_normalizes_agent_aliases_and_raw_cli_event_kinds_for_messages() 
             tool: None,
             tool_input: None,
             session_id: None,
+            turn_id: None,
+            task_title: None,
+            summary: None,
             timestamp: None,
         },
         400,
@@ -545,6 +662,9 @@ fn runtime_core_normalizes_cursor_and_pi_events() {
             tool: Some("Shell".to_string()),
             tool_input: Some(json!({ "command": "pnpm build" })),
             session_id: None,
+            turn_id: None,
+            task_title: None,
+            summary: None,
             timestamp: None,
         },
         100,
@@ -558,6 +678,9 @@ fn runtime_core_normalizes_cursor_and_pi_events() {
             tool: None,
             tool_input: Some(json!({ "subject": "implement pi integration" })),
             session_id: None,
+            turn_id: None,
+            task_title: None,
+            summary: None,
             timestamp: None,
         },
         200,
@@ -571,6 +694,9 @@ fn runtime_core_normalizes_cursor_and_pi_events() {
             tool: Some("Read".to_string()),
             tool_input: Some(json!({ "filePath": "/repo/src/App.tsx" })),
             session_id: None,
+            turn_id: None,
+            task_title: None,
+            summary: None,
             timestamp: None,
         },
         600,
@@ -584,6 +710,9 @@ fn runtime_core_normalizes_cursor_and_pi_events() {
             tool: Some("Read".to_string()),
             tool_input: Some(json!({ "filePath": "/repo/src/App.tsx" })),
             session_id: None,
+            turn_id: None,
+            task_title: None,
+            summary: None,
             timestamp: None,
         },
         900,
@@ -621,6 +750,9 @@ fn runtime_core_rejects_missing_or_wrong_bearer_token() {
             tool: None,
             tool_input: None,
             session_id: None,
+            turn_id: None,
+            task_title: None,
+            summary: None,
             timestamp: None,
         },
         10,
@@ -709,6 +841,9 @@ fn runtime_event_log_rotates_under_synthetic_event_stream() {
                 tool: Some(format!("Tool{index}")),
                 tool_input: None,
                 session_id: Some("synthetic-session".to_string()),
+                turn_id: None,
+                task_title: None,
+                summary: None,
                 timestamp: Some(index),
             },
             1_000 + index,
