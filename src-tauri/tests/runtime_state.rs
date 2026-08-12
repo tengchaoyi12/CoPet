@@ -152,6 +152,9 @@ fn event(kind: &str, tool: Option<&str>) -> RuntimeEvent {
         tool: tool.map(ToString::to_string),
         tool_input: None,
         session_id: None,
+        turn_id: None,
+        task_title: None,
+        summary: None,
         timestamp: None,
     }
 }
@@ -163,6 +166,9 @@ fn event_with_agent(agent: &str) -> RuntimeEvent {
         tool: None,
         tool_input: None,
         session_id: None,
+        turn_id: None,
+        task_title: None,
+        summary: None,
         timestamp: None,
     }
 }

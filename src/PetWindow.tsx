@@ -4,38 +4,36 @@ import { X } from "lucide-react";
 import type {
   CSSProperties,
   MouseEvent as ReactMouseEvent,
-  PointerEvent as ReactPointerEvent,
 } from "react";
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 
 import { ErrorView, LoadingView } from "./components/AppShell";
 import { PetSprite } from "./components/PetSprite";
+import { TaskNotifications } from "./components/TaskNotifications";
 import { Toaster } from "./components/ui/sonner";
 import { useLayeredPetState } from "./hooks/useLayeredPetState";
-import { usePetStartupAnimation } from "./hooks/usePetStartupAnimation";
 import {
   useAgentMessages,
   useLoadState,
   useLocale,
   useAgentMessageVisible,
-  usePetInteractions,
-  usePetState,
   usePetWindowSize,
-  useSelectedSoundPack,
   useSelectedPet,
 } from "./hooks/useAppStore";
+import { useTaskNotifications } from "./hooks/useTaskNotifications";
 import {
   dismissAgentMessage,
+  openCodex,
   openSettingsWindow,
   reloadAppStore,
   setAgentMessageVisible as setAgentMessageVisibleCommand,
   setPetVisible as setPetVisibleCommand,
 } from "./lib/appCommands";
 import { usePetContextMenu } from "./hooks/usePetContextMenu";
-import { agentSoundKeyForPetState, usePetSounds } from "./hooks/usePetSounds";
 import { createTranslator } from "./lib/i18n";
 import type { AgentMessage, PetWindowSize } from "./lib/appTypes";
+import type { ComposedView } from "./lib/petAnimation";
 import {
   defaultPetWindowSize,
   maxPetWindowLogicalDimensions,
@@ -49,6 +47,12 @@ import {
 } from "./lib/petWindowUi";
 import type { PetWindowSizeSliderDragPayload } from "./lib/petWindowUi";
 import { agentIconUrl } from "./lib/agentIcons";
+
+const staticPetView: ComposedView = {
+  bodySpriteRow: "idle",
+  emotionOverlay: null,
+  dragging: false,
+};
 
 const setAgentMessageVisible = async (visible: boolean) => {
   const { errorMessage } = await setAgentMessageVisibleCommand(visible);
@@ -66,23 +70,12 @@ export function PetWindow() {
   const loadState = useLoadState();
   const agentMessages = useAgentMessages();
   const selectedPet = useSelectedPet();
-  const selectedSoundPack = useSelectedSoundPack();
-  const petState = usePetState();
+  const taskNotifications = useTaskNotifications();
   const agentMessageVisible = useAgentMessageVisible();
-  const petInteractions = usePetInteractions();
-  const soundEnabled = petInteractions.enableClickSounds;
   const petWindowSize = usePetWindowSize();
   const locale = useLocale();
   const t = createTranslator(locale);
 
-  const { playInteractionSound, playAgentSound, stopAllSounds } = usePetSounds({
-    enabled: soundEnabled,
-    sounds: selectedSoundPack?.sounds,
-  });
-  const lastAgentSoundKeyRef = useRef<string | null>(null);
-  const previousPetStateRef = useRef<string | null>(null);
-  const selectedPetIdRef = useRef<string | null>(null);
-  const selectedSoundPackIdRef = useRef<string | null>(null);
   // macOS NSPanel does not always deliver contextmenu to the webview; long-press
   // is a fallback path that opens the same native menu below the pet.
   // We require __TAURI__ to be present so this path does not activate under
@@ -90,36 +83,32 @@ export function PetWindow() {
   const isMac =
     typeof navigator !== "undefined" &&
     /Mac/i.test(navigator.userAgent) &&
-    typeof (window as { __TAURI__?: unknown }).__TAURI__ !== "undefined";
+    typeof (window as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ !==
+      "undefined";
   const initialContentResizeAnchorReleaseMs = 250;
   const openPetContextMenuRef = useRef<() => void>(() => undefined);
-  const { composed, bindInput, bindMotion, notifyFailed } = useLayeredPetState({
+  const { bindInput, bindMotion, notifyFailed } = useLayeredPetState({
     onLongPress: isMac ? () => openPetContextMenuRef.current() : undefined,
-    onInteractionSound: playInteractionSound,
+    onPrimaryAction: () => {
+      void openCodex().then(({ errorMessage }) => {
+        if (errorMessage) {
+          toast.error(errorMessage);
+        }
+      });
+    },
   });
-  const startup = usePetStartupAnimation({
-    enabled: petInteractions.enableStartupAnimation,
-    selectedPetId: selectedPet?.id ?? null,
-    selectedSoundPackId: selectedSoundPack?.id ?? null,
-    onInteractionSound: playInteractionSound,
-    onAgentSound: playAgentSound,
-  });
-  const displayedAgentMessages = startup.hideMessages ? [] : agentMessages;
-  const displayedComposed = startup.composedOverride ?? composed;
+  const displayedTaskNotifications = taskNotifications.notifications;
+  const taskNotificationAgents = new Set(
+    displayedTaskNotifications.map((notification) => notification.agent),
+  );
+  const displayedAgentMessages = agentMessages.filter(
+    (message) => !taskNotificationAgents.has(message.agent),
+  );
 
   const stackRef = useRef<HTMLDivElement | null>(null);
   const sliderDraggingRef = useRef(false);
   const initialContentResizePendingRef = useRef(true);
   const initialContentResizeReleaseTimerRef = useRef<number | null>(null);
-  const startupHadOverrideRef = useRef(false);
-  if (startup.hideMessages) {
-    // Capture the fact that the startup slide-in actually ran (vs. the
-    // disabled / reduced-motion paths that go straight to complete). We use
-    // this below to skip the first reset-position resize, which would
-    // otherwise teleport the pet leftward when the stack grows to include
-    // agent messages.
-    startupHadOverrideRef.current = true;
-  }
   const resizeTimerRef = useRef<number | null>(null);
   const sliderScaleReleaseTimerRef = useRef<number | null>(null);
   const petWindowSizeRef = useRef(defaultPetWindowSize);
@@ -154,7 +143,9 @@ export function PetWindow() {
   });
   const configuredPetScale = petWindowScaleFromSize(petWindowSize);
   const fitPetScale =
-    selectedPet && displayedAgentMessages.length === 0
+    selectedPet &&
+    displayedAgentMessages.length === 0 &&
+    displayedTaskNotifications.length === 0
       ? Math.max(
           0.01,
           Math.min(
@@ -192,80 +183,6 @@ export function PetWindow() {
   }, [petScale, petWindowSize]);
 
   useEffect(() => {
-    const selectedPetId = selectedPet?.id ?? null;
-    const previousPetId = selectedPetIdRef.current;
-    const selectedPetChanged = previousPetId !== selectedPetId;
-    // Only the "was a real id, is now a different real id" transition counts
-    // as a user-driven switch. The initial null → ready transition is just
-    // startup state settling; stopAllSounds() here would silence the startup
-    // wheee that usePetStartupAnimation just kicked off in the effect chain
-    // immediately above this one.
-    const selectedPetUserSwitch =
-      previousPetId !== null && selectedPetChanged;
-    selectedPetIdRef.current = selectedPetId;
-
-    const selectedSoundPackId = selectedSoundPack?.id ?? null;
-    const previousSoundPackId = selectedSoundPackIdRef.current;
-    const selectedSoundPackChanged = previousSoundPackId !== selectedSoundPackId;
-    const selectedSoundPackUserSwitch =
-      previousSoundPackId !== null && selectedSoundPackChanged;
-    selectedSoundPackIdRef.current = selectedSoundPackId;
-
-    const previousPetState = previousPetStateRef.current;
-    const petStateChanged = previousPetState !== null && previousPetState !== petState;
-    previousPetStateRef.current = petState;
-
-    if (selectedPetChanged || selectedSoundPackChanged) {
-      lastAgentSoundKeyRef.current = null;
-      if (selectedPetUserSwitch || selectedSoundPackUserSwitch) {
-        stopAllSounds();
-      }
-      return;
-    }
-
-    const soundKey = agentSoundKeyForPetState(petState);
-    if (!soundEnabled || !agentMessageVisible || soundKey === null) {
-      lastAgentSoundKeyRef.current = null;
-      return;
-    }
-    if (!petStateChanged) {
-      return;
-    }
-    if (lastAgentSoundKeyRef.current === soundKey) {
-      return;
-    }
-    lastAgentSoundKeyRef.current = soundKey;
-    playAgentSound(soundKey);
-  }, [
-    agentMessageVisible,
-    petState,
-    playAgentSound,
-    selectedSoundPack?.id,
-    selectedPet?.id,
-    soundEnabled,
-    stopAllSounds,
-  ]);
-
-  useEffect(() => {
-    if (startup.hideMessages) {
-      return;
-    }
-
-    // Preserve the bottom-right placement the Rust slide-in landed on.
-    // A reset-position resize here would setSize() to the new stack content
-    // size (now including agent messages) and shift window-left to keep the
-    // right edge against the monitor, visually nudging the centered pet to
-    // the left. After this single skip, later resizes use the "center"
-    // anchor and stay stable.
-    if (
-      startupHadOverrideRef.current &&
-      initialContentResizePendingRef.current
-    ) {
-      initialContentResizePendingRef.current = false;
-      startupHadOverrideRef.current = false;
-      return;
-    }
-
     const animationFrame = window.requestAnimationFrame(() => {
       const anchor =
         initialContentResizePendingRef.current && stackRef.current
@@ -284,7 +201,7 @@ export function PetWindow() {
     selectedPet?.id,
     petScale,
     displayedAgentMessages.length,
-    startup.hideMessages,
+    displayedTaskNotifications.length,
     viewportSize.height,
     viewportSize.width,
   ]);
@@ -373,10 +290,6 @@ export function PetWindow() {
     };
   }, []);
 
-  const handlePointerDown = (event: ReactPointerEvent<HTMLElement>) => {
-    motionHandlers.onPointerDown(event);
-  };
-
   const handleContextMenu = (event: ReactMouseEvent<HTMLElement>) => {
     event.preventDefault();
     openPetContextMenuBelowPet();
@@ -403,12 +316,14 @@ export function PetWindow() {
       <main
         className="pet-window"
         data-tauri-drag-region
-        onPointerDown={handlePointerDown}
         onContextMenu={handleContextMenu}
       >
         <div
           className="pet-window-stack"
-          data-fit-pet={displayedAgentMessages.length === 0}
+          data-fit-pet={
+            displayedAgentMessages.length === 0 &&
+            displayedTaskNotifications.length === 0
+          }
           ref={stackRef}
           style={
             selectedPet
@@ -420,6 +335,13 @@ export function PetWindow() {
               : undefined
           }
         >
+          {displayedTaskNotifications.length > 0 ? (
+            <TaskNotifications
+              notifications={displayedTaskNotifications}
+              onDismiss={(id) => void taskNotifications.dismiss(id)}
+              onOpen={(id) => void taskNotifications.open(id)}
+            />
+          ) : null}
           {displayedAgentMessages.length > 0 ? (
             <AgentMessages
               dismissLabel={t("dismiss")}
@@ -430,9 +352,11 @@ export function PetWindow() {
           {selectedPet ? (
             <PetSprite
               pet={selectedPet}
-              composed={displayedComposed}
+              composed={staticPetView}
               scale={petScale}
+              animated={false}
               inputHandlers={bindInput()}
+              motionHandlers={motionHandlers}
             />
           ) : null}
         </div>

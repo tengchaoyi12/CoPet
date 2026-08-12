@@ -1,5 +1,5 @@
 use super::helpers::{manager_with_fake_agents, read_json};
-use copet_lib::agents::AgentManager;
+use copet_lib::agents::{default_executable_search_paths, AgentManager};
 use std::{
     fs,
     io::{Read, Write},
@@ -10,6 +10,68 @@ use std::{
 };
 
 static PROXY_ENV_LOCK: Mutex<()> = Mutex::new(());
+
+#[cfg(target_os = "macos")]
+#[test]
+fn default_search_paths_include_codex_desktop_bundled_cli() {
+    let paths = default_executable_search_paths(std::path::Path::new("/tmp/copet-home"));
+
+    assert!(paths.contains(&std::path::PathBuf::from(
+        "/Applications/ChatGPT.app/Contents/Resources"
+    )));
+}
+
+fn capture_codex_helper_request(kind: &str, input: &str) -> String {
+    let temp = tempfile::tempdir().unwrap();
+    let home = temp.path().join("home");
+    let root = temp.path().join(".copet");
+    let runtime = temp.path().join("runtime");
+    let manager = manager_with_fake_agents(&root, &home);
+    manager.install("codex").unwrap();
+
+    let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+    let endpoint = format!(
+        "http://127.0.0.1:{}/v1/events",
+        listener.local_addr().unwrap().port()
+    );
+    fs::create_dir_all(&runtime).unwrap();
+    fs::write(runtime.join("event-endpoint"), endpoint).unwrap();
+    fs::write(runtime.join("event-token"), "secret").unwrap();
+
+    let receiver = std::thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        stream
+            .set_read_timeout(Some(Duration::from_secs(2)))
+            .unwrap();
+        let mut buffer = [0_u8; 4096];
+        let size = stream.read(&mut buffer).unwrap();
+        let request = String::from_utf8_lossy(&buffer[..size]).to_string();
+        stream
+            .write_all(b"HTTP/1.1 202 Accepted\r\nContent-Length: 2\r\n\r\n{}")
+            .unwrap();
+        request
+    });
+
+    let helper = root.join("hooks/copet-hook.sh");
+    let mut child = Command::new(helper)
+        .args(["codex", kind])
+        .env("COPET_RUNTIME_DIR", &runtime)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    child
+        .stdin
+        .as_mut()
+        .unwrap()
+        .write_all(input.as_bytes())
+        .unwrap();
+    let output = child.wait_with_output().unwrap();
+    assert!(output.status.success());
+    assert_eq!(String::from_utf8_lossy(&output.stdout), "{}\n");
+
+    receiver.join().unwrap()
+}
 
 #[test]
 fn codex_install_writes_hooks_json_and_enables_hooks_feature() {
@@ -149,6 +211,25 @@ fn codex_helper_bypasses_loopback_proxy_when_posting_runtime_events() {
 }
 
 #[test]
+fn codex_helper_forwards_task_identity_and_safe_text() {
+    let prompt_request = capture_codex_helper_request(
+        "user.prompt",
+        r#"{"session_id":"thread-123","turn_id":"turn-456","prompt":"修复登录按钮"}"#,
+    );
+    assert!(prompt_request.contains(r#""sessionId":"thread-123""#));
+    assert!(prompt_request.contains(r#""turnId":"turn-456""#));
+    assert!(prompt_request.contains(r#""taskTitle":"修复登录按钮""#));
+
+    let stop_request = capture_codex_helper_request(
+        "session.stop",
+        r#"{"session_id":"thread-123","turn_id":"turn-456","last_assistant_message":"已完成登录按钮修复"}"#,
+    );
+    assert!(stop_request.contains(r#""sessionId":"thread-123""#));
+    assert!(stop_request.contains(r#""turnId":"turn-456""#));
+    assert!(stop_request.contains(r#""summary":"已完成登录按钮修复""#));
+}
+
+#[test]
 fn codex_helper_outputs_schema_neutral_json_when_runtime_is_unavailable() {
     let temp = tempfile::tempdir().unwrap();
     let home = temp.path().join("home");
@@ -283,7 +364,7 @@ fn install_rejects_missing_local_agent_cli_without_writing_hooks() {
     let temp = tempfile::tempdir().unwrap();
     let home = temp.path().join("home");
     let root = temp.path().join(".copet");
-    let manager = AgentManager::new_with_executable_search_paths(&root, &home, Vec::new());
+    let manager = AgentManager::new_with_exact_executable_search_paths(&root, &home, Vec::new());
 
     let error = manager.install("codex").unwrap_err().to_string();
 

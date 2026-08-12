@@ -148,6 +148,18 @@ mod subject {
     }
 
     #[test]
+    fn pet_window_accepts_first_mouse_for_one_press_shortcuts() {
+        let config = include_str!("../tauri.conf.json");
+        let pet_window_config = config
+            .split("\"label\": \"pet\"")
+            .nth(1)
+            .and_then(|rest| rest.split("\"label\": \"settings\"").next())
+            .expect("pet window config should be present before settings window config");
+
+        assert!(pet_window_config.contains("\"acceptFirstMouse\": true"));
+    }
+
+    #[test]
     fn pet_window_config_does_not_rely_on_tauri_always_on_top() {
         let config = include_str!("../tauri.conf.json");
         let pet_window_config = config

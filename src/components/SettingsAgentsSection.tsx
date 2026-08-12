@@ -26,6 +26,7 @@ export function SettingsAgentsSection({
   runAdapterAction,
   t,
 }: SettingsAgentsSectionProps) {
+  const visibleAdapters = adapters.filter((adapter) => adapter.id === "codex");
   const handleAdapterChange = async (
     adapter: AdapterSummary,
     checked: boolean,
@@ -62,7 +63,7 @@ export function SettingsAgentsSection({
       </p>
 
       <ul className="adapter-card-list">
-        {adapters.map((adapter) => {
+        {visibleAdapters.map((adapter) => {
           const iconUrl = agentIconUrl(adapter.id);
           const meta = agentMeta(adapter.id);
           const busy = adapterBusyId === adapter.id;

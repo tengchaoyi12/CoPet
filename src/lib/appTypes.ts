@@ -143,9 +143,32 @@ export type AgentMessage = {
   updatedAtMs: number;
 };
 
+export type TaskStatus = "running" | "waiting" | "completed" | "failed";
+
+export type TaskNotification = {
+  id: string;
+  agent: string;
+  displayName: string;
+  sessionId: string | null;
+  turnId: string | null;
+  status: TaskStatus;
+  title: string | null;
+  summary: string | null;
+  unread: boolean;
+  updatedAtMs: number;
+};
+
+export type TaskAttention = {
+  id: string;
+  kind: "waiting" | "completed" | "failed";
+  occurredAtMs: number;
+};
+
 export type RuntimeUpdate = {
   currentState: DerivedPetState;
   messages: AgentMessage[];
+  notifications: TaskNotification[];
+  attention: TaskAttention | null;
 };
 
 export type RuntimeStatus = {
@@ -153,6 +176,8 @@ export type RuntimeStatus = {
   endpoint: string;
   currentState: DerivedPetState;
   messages: AgentMessage[];
+  notifications: TaskNotification[];
+  attention: TaskAttention | null;
   acceptedEvents: number;
   rejectedEvents: number;
 };

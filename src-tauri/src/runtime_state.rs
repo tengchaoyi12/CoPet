@@ -29,6 +29,12 @@ pub struct RuntimeEvent {
     pub tool_input: Option<Value>,
     #[serde(default, alias = "session_id")]
     pub session_id: Option<String>,
+    #[serde(default, alias = "turn_id")]
+    pub turn_id: Option<String>,
+    #[serde(default, alias = "task_title")]
+    pub task_title: Option<String>,
+    #[serde(default)]
+    pub summary: Option<String>,
     #[serde(default)]
     pub timestamp: Option<u64>,
 }
@@ -171,7 +177,20 @@ pub fn normalize_runtime_event(mut event: RuntimeEvent) -> RuntimeEvent {
     if let Some(kind) = canonical_event_kind(&event.kind) {
         event.kind = kind.to_string();
     }
+    event.task_title = sanitize_runtime_text(event.task_title.take(), 80);
+    event.summary = sanitize_runtime_text(event.summary.take(), 240);
     event
+}
+
+fn sanitize_runtime_text(value: Option<String>, max_chars: usize) -> Option<String> {
+    let compact = value?
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .chars()
+        .take(max_chars)
+        .collect::<String>();
+    (!compact.is_empty()).then_some(compact)
 }
 
 pub fn canonical_agent_id(agent: &str) -> Option<&'static str> {

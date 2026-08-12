@@ -4,6 +4,8 @@ import type {
   AppState,
   PetStateId,
   PetSummary,
+  TaskAttention,
+  TaskNotification,
 } from "./appTypes";
 
 export type AppStoreSnapshot = {
@@ -13,6 +15,8 @@ export type AppStoreSnapshot = {
   appState: AppState | null;
   petState: PetStateId;
   agentMessages: AgentMessage[];
+  taskNotifications: TaskNotification[];
+  taskAttention: TaskAttention | null;
   petVisible: boolean;
   petVisibleLoaded: boolean;
   adapters: AdapterSummary[];
@@ -31,6 +35,8 @@ const INITIAL_SNAPSHOT: AppStoreSnapshot = {
   appState: null,
   petState: "idle",
   agentMessages: [],
+  taskNotifications: [],
+  taskAttention: null,
   petVisible: true,
   petVisibleLoaded: false,
   adapters: [],

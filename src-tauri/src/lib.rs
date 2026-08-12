@@ -1,5 +1,6 @@
 pub mod agents;
 pub mod app_state;
+pub mod codex_focus;
 pub mod commands;
 pub mod config_store;
 pub mod diagnostics;
@@ -11,6 +12,8 @@ pub mod pet_registry;
 pub mod runtime_server;
 pub mod runtime_state;
 pub mod sound_pack;
+pub mod task_notifications;
+pub mod task_opener;
 pub mod window_placement;
 
 use agents::{AdapterError, AdapterOperationResult, AdapterSummary, AgentManager};
@@ -622,9 +625,75 @@ fn get_runtime_status(app: tauri::AppHandle) -> RuntimeSnapshot {
             endpoint: String::new(),
             current_state: runtime_state::DerivedPetState::idle(),
             messages: Vec::new(),
+            notifications: Vec::new(),
+            attention: None,
             accepted_events: 0,
             rejected_events: 0,
         })
+}
+
+#[tauri::command]
+fn get_autostart_enabled(app: tauri::AppHandle) -> Result<bool, String> {
+    #[cfg(target_os = "macos")]
+    {
+        use tauri_plugin_autostart::ManagerExt;
+        return app
+            .autolaunch()
+            .is_enabled()
+            .map_err(|error| error.to_string());
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = app;
+        Err("当前平台不支持登录自启动".to_string())
+    }
+}
+
+#[tauri::command]
+fn set_autostart_enabled(app: tauri::AppHandle, enabled: bool) -> Result<bool, String> {
+    #[cfg(target_os = "macos")]
+    {
+        use tauri_plugin_autostart::ManagerExt;
+        let manager = app.autolaunch();
+        if enabled {
+            manager.enable().map_err(|error| error.to_string())?;
+        } else {
+            manager.disable().map_err(|error| error.to_string())?;
+        }
+        return manager.is_enabled().map_err(|error| error.to_string());
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = (app, enabled);
+        Err("当前平台不支持登录自启动".to_string())
+    }
+}
+
+#[tauri::command]
+fn open_task_notification(
+    app: tauri::AppHandle,
+    id: String,
+    runtime: tauri::State<'_, RuntimeManager>,
+) -> Result<RuntimeUpdate, String> {
+    let update = runtime.open_task_notification(&id)?;
+    emit_runtime_update(&app, update.clone());
+    Ok(update)
+}
+
+#[tauri::command]
+fn dismiss_task_notification(
+    app: tauri::AppHandle,
+    id: String,
+    runtime: tauri::State<'_, RuntimeManager>,
+) -> Result<RuntimeUpdate, String> {
+    let update = runtime.dismiss_task_notification(&id)?;
+    emit_runtime_update(&app, update.clone());
+    Ok(update)
+}
+
+#[tauri::command]
+fn open_codex() -> Result<(), String> {
+    task_opener::open_codex_task(None).map_err(|error| error.to_string())
 }
 
 fn emit_app_state_changed(app: &tauri::AppHandle, state: &AppState) -> Result<(), String> {
@@ -647,12 +716,14 @@ fn emit_pet_window_visibility_changed(app: &tauri::AppHandle, visible: bool) {
     );
 }
 
-fn emit_runtime_update(app: &tauri::AppHandle, state: RuntimeUpdate) {
+pub(crate) fn emit_runtime_update(app: &tauri::AppHandle, state: RuntimeUpdate) {
     dev_log_app(
         "emit.pet-state-changed",
         serde_json::json!({
             "currentState": &state.current_state,
             "messages": &state.messages,
+            "notifications": &state.notifications,
+            "attention": &state.attention,
         }),
     );
     for label in ["pet", "settings"] {
@@ -958,7 +1029,7 @@ pub fn run_agent_auto_install_once(
         return Ok(agents::AutoInstallSummary::default());
     }
 
-    let summary = manager.auto_install_detected_agents();
+    let summary = manager.auto_install_selected(&["codex"]);
     #[cfg(debug_assertions)]
     dev_log_agent_auto_install(&summary);
     store.set_agent_auto_install_complete(true)?;
@@ -987,11 +1058,26 @@ fn list_agent_adapters() -> Result<Vec<AdapterSummary>, String> {
     let store = ConfigStore::from_home().map_err(localize_store_error)?;
     AgentManager::from_home(store.root())
         .and_then(|manager| manager.list())
+        .map(|adapters| {
+            adapters
+                .into_iter()
+                .filter(|adapter| adapter.id == "codex")
+                .collect()
+        })
         .map_err(localize_adapter_error)
+}
+
+pub fn ensure_app_adapter_supported(adapter_id: &str) -> Result<(), String> {
+    if adapter_id == "codex" {
+        Ok(())
+    } else {
+        Err("首版仅支持 Codex 集成".to_string())
+    }
 }
 
 #[tauri::command]
 fn install_agent_adapter(adapter_id: String) -> Result<AdapterOperationResult, String> {
+    ensure_app_adapter_supported(&adapter_id)?;
     let store = ConfigStore::from_home().map_err(localize_store_error)?;
     let result = AgentManager::from_home(store.root())
         .and_then(|manager| manager.install(&adapter_id))
@@ -1005,6 +1091,7 @@ fn uninstall_agent_adapter(
     app: tauri::AppHandle,
     adapter_id: String,
 ) -> Result<AdapterOperationResult, String> {
+    ensure_app_adapter_supported(&adapter_id)?;
     let store = ConfigStore::from_home().map_err(localize_store_error)?;
     let result = AgentManager::from_home(store.root())
         .and_then(|manager| manager.uninstall(&adapter_id))
@@ -1017,6 +1104,7 @@ fn uninstall_agent_adapter(
 
 #[tauri::command]
 fn repair_agent_adapter(adapter_id: String) -> Result<AdapterOperationResult, String> {
+    ensure_app_adapter_supported(&adapter_id)?;
     let store = ConfigStore::from_home().map_err(localize_store_error)?;
     let result = AgentManager::from_home(store.root())
         .and_then(|manager| manager.repair(&adapter_id))
@@ -1051,6 +1139,11 @@ pub fn run() {
                 set_builtin_sounds_dir(dir);
             }
             let store = ConfigStore::from_home()?;
+            #[cfg(target_os = "macos")]
+            app.handle().plugin(tauri_plugin_autostart::init(
+                tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+                None,
+            ))?;
             // ensure_ready already builds the complete startup snapshot. Reuse
             // it for window sizing, menus, and the initial frontend event so
             // startup does not enumerate every pet and sound pack again.
@@ -1064,6 +1157,7 @@ pub fn run() {
                 emit_runtime_update(&handle, state);
             })?;
             app.manage(runtime);
+            codex_focus::install_codex_focus_observer(app.handle());
             if let Some(window) = app.get_webview_window("pet") {
                 #[cfg(target_os = "macos")]
                 {
@@ -1142,6 +1236,11 @@ pub fn run() {
             import_pet_folder,
             remove_pet,
             get_runtime_status,
+            get_autostart_enabled,
+            set_autostart_enabled,
+            open_codex,
+            open_task_notification,
+            dismiss_task_notification,
             open_settings_window,
             list_agent_adapters,
             install_agent_adapter,

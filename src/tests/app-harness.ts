@@ -48,6 +48,7 @@ export type PetSounds = {
 export type PetInteractionPrefs = {
   enableClickSounds: boolean;
   cooldownStyle: "short" | "normal" | "lazy";
+  enableStartupAnimation?: boolean;
 };
 
 export type AppState = {
@@ -73,11 +74,32 @@ export type AdapterSummary = {
   message: string;
 };
 
-type RuntimeStatus = {
+export type TaskNotification = {
+  id: string;
+  agent: string;
+  displayName: string;
+  sessionId: string | null;
+  turnId: string | null;
+  status: "running" | "waiting" | "completed" | "failed";
+  title: string | null;
+  summary: string | null;
+  unread: boolean;
+  updatedAtMs: number;
+};
+
+export type TaskAttention = {
+  id: string;
+  kind: "waiting" | "completed" | "failed";
+  occurredAtMs: number;
+};
+
+export type RuntimeStatus = {
   port: number;
   endpoint: string;
   currentState: { state: string; sinceMs: number; idleAfterMs: number | null };
   messages: AgentMessage[];
+  notifications?: TaskNotification[];
+  attention?: TaskAttention | null;
   acceptedEvents: number;
   rejectedEvents: number;
 };
@@ -336,6 +358,9 @@ export async function createAppHarness(browser: Browser, options: AppHarnessOpti
   let adapters = options.adapters ?? [];
   let codexPets = options.codexPets ?? [];
   let petVisible = options.petVisible ?? true;
+  let autostartEnabled = Boolean(
+    options.commandResults?.get_autostart_enabled ?? false,
+  );
   const scaleFactor = options.scaleFactor ?? 1;
   const monitor =
     options.monitor ??
@@ -357,6 +382,8 @@ export async function createAppHarness(browser: Browser, options: AppHarnessOpti
       endpoint: "http://127.0.0.1:8765/v1/events",
       currentState: { state: "idle", sinceMs: 0, idleAfterMs: null },
       messages: [],
+      notifications: [],
+      attention: null,
       acceptedEvents: 0,
       rejectedEvents: 0,
     } satisfies RuntimeStatus);
@@ -382,6 +409,8 @@ export async function createAppHarness(browser: Browser, options: AppHarnessOpti
             payload: {
               currentState: runtimeStatus.currentState,
               messages: runtimeStatus.messages,
+              notifications: runtimeStatus.notifications ?? [],
+              attention: null,
             },
           },
         ),
@@ -438,12 +467,38 @@ export async function createAppHarness(browser: Browser, options: AppHarnessOpti
           }
           return null;
         }
+        if (command === "open_codex") {
+          return null;
+        }
 
         if (command === "get_app_state") {
           return state;
         }
         if (command === "get_runtime_status") {
           return runtimeStatus;
+        }
+        if (command === "set_autostart_enabled") {
+          autostartEnabled = Boolean(args.enabled);
+          return autostartEnabled;
+        }
+        if (
+          command === "open_task_notification" ||
+          command === "dismiss_task_notification"
+        ) {
+          runtimeStatus = {
+            ...runtimeStatus,
+            notifications: (runtimeStatus.notifications ?? []).filter(
+              (notification) => notification.id !== args.id,
+            ),
+            attention: null,
+          };
+          await emitRuntimeStatus();
+          return {
+            currentState: runtimeStatus.currentState,
+            messages: runtimeStatus.messages,
+            notifications: runtimeStatus.notifications ?? [],
+            attention: null,
+          };
         }
         if (command === "list_agent_adapters") {
           return adapters;
@@ -822,6 +877,8 @@ export async function createAppHarness(browser: Browser, options: AppHarnessOpti
     update: {
       currentState: { state: string; sinceMs?: number; idleAfterMs?: number | null };
       messages?: AgentMessage[];
+      notifications?: TaskNotification[];
+      attention?: TaskAttention | null;
     },
   ) {
     const payload = {
@@ -831,11 +888,15 @@ export async function createAppHarness(browser: Browser, options: AppHarnessOpti
         idleAfterMs: update.currentState.idleAfterMs ?? null,
       },
       messages: update.messages ?? [],
+      notifications: update.notifications ?? [],
+      attention: update.attention ?? null,
     };
     runtimeStatus = {
       ...runtimeStatus,
       currentState: payload.currentState,
       messages: payload.messages,
+      notifications: payload.notifications,
+      attention: payload.attention,
     };
     await page.evaluate(
       ({ event, payload: data }) => window.__copetTestEmit(event, data),

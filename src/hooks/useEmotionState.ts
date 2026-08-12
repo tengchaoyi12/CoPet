@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 
 import type { AgentState, EmotionState, InputState } from "../lib/petAnimation";
+import type { TaskAttention } from "../lib/appTypes";
+import { taskAttentionSignalKey } from "../lib/taskAttention";
 
 const SPARKLE_DURATION_MS = 600;
 const SMOKE_DURATION_MS = 800;
@@ -10,10 +12,15 @@ const HEART_PETTED_SLOW_DURATION_MS = 1500;
 // Keep in sync with PETTED_DURATION_MS in src/hooks/useInteractionState.ts.
 const HEART_PETTED_DURATION_MS = 900;
 
-export function useEmotionState(agent: AgentState, input: InputState): EmotionState {
+export function useEmotionState(
+  agent: AgentState,
+  input: InputState,
+  attention: TaskAttention | null = null,
+): EmotionState {
   const [state, setState] = useState<EmotionState>({ kind: "none" });
   const previousAgentKindRef = useRef<AgentState["kind"]>(agent.kind);
   const previousInputKindRef = useRef<InputState["kind"]>(input.kind);
+  const previousAttentionSignalRef = useRef<string | null>(null);
   const timerRef = useRef<number | null>(null);
   const emotionStateRef = useRef<EmotionState>({ kind: "none" });
 
@@ -27,6 +34,23 @@ export function useEmotionState(agent: AgentState, input: InputState): EmotionSt
 
     const previousKind = previousAgentKindRef.current;
     previousAgentKindRef.current = agent.kind;
+    const attentionSignal = attention && taskAttentionSignalKey(attention);
+    const isNewAttention =
+      attentionSignal !== null &&
+      previousAttentionSignalRef.current !== attentionSignal;
+    if (attention !== null) {
+      previousAttentionSignalRef.current = attentionSignal;
+    }
+
+    if (isNewAttention && attention?.kind === "completed") {
+      clearTimer();
+      setState({ kind: "sparkle" });
+      timerRef.current = window.setTimeout(() => {
+        timerRef.current = null;
+        setState({ kind: "none" });
+      }, SPARKLE_DURATION_MS);
+      return;
+    }
 
     if (agent.kind === "thinking") {
       clearTimer();
@@ -59,7 +83,7 @@ export function useEmotionState(agent: AgentState, input: InputState): EmotionSt
     if (previousKind === "thinking") {
       setState((current) => (current.kind === "loadingBubble" ? { kind: "none" } : current));
     }
-  }, [agent.kind]);
+  }, [agent.kind, attention]);
 
   // Keep emotionStateRef in sync so the input effect can read the latest
   // emotion state without adding `state` to its dependency array.

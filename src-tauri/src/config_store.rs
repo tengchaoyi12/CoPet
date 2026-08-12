@@ -124,6 +124,10 @@ impl ConfigStore {
         &self.root
     }
 
+    pub fn task_notifications_path(&self) -> PathBuf {
+        self.runtime_dir().join("task-notifications.json")
+    }
+
     pub fn agent_auto_install_complete(&self) -> Result<bool, StoreError> {
         Ok(self.load_or_create_config()?.agent_auto_install_complete)
     }

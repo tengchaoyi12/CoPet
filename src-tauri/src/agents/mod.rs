@@ -204,9 +204,28 @@ impl AgentManager {
     }
 
     pub fn auto_install_detected_agents(&self) -> AutoInstallSummary {
+        self.auto_install_selected(
+            &ADAPTERS
+                .iter()
+                .map(|adapter| adapter.id())
+                .collect::<Vec<_>>(),
+        )
+    }
+
+    pub fn auto_install_selected(&self, adapter_ids: &[&str]) -> AutoInstallSummary {
         let mut summary = AutoInstallSummary::default();
 
-        for adapter in ADAPTERS {
+        for adapter_id in adapter_ids {
+            let adapter = match adapter_by_id(adapter_id) {
+                Ok(adapter) => adapter,
+                Err(error) => {
+                    summary.failed.push(AutoInstallFailure {
+                        adapter_id: (*adapter_id).to_string(),
+                        error: error.to_string(),
+                    });
+                    continue;
+                }
+            };
             let adapter_id = adapter.id().to_string();
             if !self.adapter_executable_available(adapter) {
                 summary.skipped.push(adapter_id);
@@ -618,6 +637,19 @@ fi
 if [ -z "$tool" ]; then
   tool="$(json_string_field_after_key toolCall name)"
 fi
+session_id="$(json_string_field session_id)"
+if [ -z "$session_id" ]; then
+  session_id="$(json_string_field sessionId)"
+fi
+turn_id="$(json_string_field turn_id)"
+if [ -z "$turn_id" ]; then
+  turn_id="$(json_string_field turnId)"
+fi
+prompt="$(json_string_field prompt)"
+last_assistant_message="$(json_string_field last_assistant_message)"
+if [ -z "$last_assistant_message" ]; then
+  last_assistant_message="$(json_string_field lastAssistantMessage)"
+fi
 tool_input=""
 for field in file_path:file_path filePath:filePath file:file path:path command:command CommandLine:command pattern:pattern url:url description:description subject:subject prompt:subject message:subject error:subject initialPrompt:subject AbsolutePath:filePath TargetFile:filePath DirectoryPath:path SearchDirectory:path SearchPath:path Cwd:path Query:pattern query:pattern Pattern:pattern Url:url Description:description Instruction:subject Prompt:subject Input:subject Message:subject Reason:subject Action:subject Target:subject ImageName:subject; do
   source_key="${field%%:*}"
@@ -644,7 +676,20 @@ if [ -n "$tool" ]; then
   escaped_tool="$(json_escape "$tool")"
   tool_field=",\"tool\":\"$escaped_tool\""
 fi
-payload="$(printf '{"agent":"%s","kind":"%s"%s%s}' "$(json_escape "$agent")" "$(json_escape "$kind")" "$tool_field" "$tool_input")"
+task_fields=""
+if [ -n "$session_id" ]; then
+  task_fields="$task_fields,\"sessionId\":\"$(json_escape "$session_id")\""
+fi
+if [ -n "$turn_id" ]; then
+  task_fields="$task_fields,\"turnId\":\"$(json_escape "$turn_id")\""
+fi
+if [ "$kind" = "user.prompt" ] && [ -n "$prompt" ]; then
+  task_fields="$task_fields,\"taskTitle\":\"$(json_escape "$prompt")\""
+fi
+if [ "$kind" = "session.stop" ] && [ -n "$last_assistant_message" ]; then
+  task_fields="$task_fields,\"summary\":\"$(json_escape "$last_assistant_message")\""
+fi
+payload="$(printf '{"agent":"%s","kind":"%s"%s%s%s}' "$(json_escape "$agent")" "$(json_escape "$kind")" "$tool_field" "$tool_input" "$task_fields")"
 curl -fsS --noproxy '*' --max-time 0.8 -H "Authorization: Bearer $token" -H "Content-Type: application/json" -d "$payload" "$endpoint" >/dev/null 2>&1 || true
 hook_output
 exit 0
@@ -715,7 +760,7 @@ fn executable_candidates(name: &str) -> Vec<String> {
 }
 
 fn executable_search_paths_with_defaults(home: &Path, mut paths: Vec<PathBuf>) -> Vec<PathBuf> {
-    for path in common_executable_search_paths(home) {
+    for path in default_executable_search_paths(home) {
         if !paths.iter().any(|existing| existing == &path) {
             paths.push(path);
         }
@@ -723,8 +768,8 @@ fn executable_search_paths_with_defaults(home: &Path, mut paths: Vec<PathBuf>) -
     paths
 }
 
-fn common_executable_search_paths(home: &Path) -> Vec<PathBuf> {
-    vec![
+pub fn default_executable_search_paths(home: &Path) -> Vec<PathBuf> {
+    let mut paths = vec![
         home.join(".local/bin"),
         home.join(".cargo/bin"),
         home.join(".opencode/bin"),
@@ -742,7 +787,14 @@ fn common_executable_search_paths(home: &Path) -> Vec<PathBuf> {
         PathBuf::from("/usr/bin"),
         PathBuf::from("/bin"),
         PathBuf::from("/opt/local/bin"),
-    ]
+    ];
+
+    #[cfg(target_os = "macos")]
+    paths.push(PathBuf::from(
+        "/Applications/ChatGPT.app/Contents/Resources",
+    ));
+
+    paths
 }
 
 fn is_executable_file(path: &Path) -> bool {

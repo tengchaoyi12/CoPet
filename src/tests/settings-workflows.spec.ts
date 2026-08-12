@@ -3,7 +3,6 @@ import { expect, test } from "@playwright/test";
 import {
   antigravityAdapter,
   codexAdapter,
-  copilotAdapter,
   createAppHarness,
   cursorAdapter,
   goku,
@@ -36,6 +35,20 @@ test("agent integration switch installs and uninstalls an adapter", async ({ bro
     command: "uninstall_agent_adapter",
     args: { adapterId: "codex" },
   });
+});
+
+test("首版 Agents 页面只展示 Codex", async ({ browser }) => {
+  const harness = await createAppHarness(browser, {
+    adapters: [codexAdapter, cursorAdapter, antigravityAdapter, piAdapter],
+  });
+  const page = await harness.openPage("settings");
+
+  await page.getByRole("tab", { name: "Agents" }).click();
+
+  await expect(page.getByRole("switch", { name: "Codex" })).toBeVisible();
+  await expect(page.getByRole("switch", { name: "Cursor" })).toHaveCount(0);
+  await expect(page.getByRole("switch", { name: "Antigravity" })).toHaveCount(0);
+  await expect(page.getByRole("switch", { name: "Pi" })).toHaveCount(0);
 });
 
 test("turning off an agent clears its pet window message", async ({ browser }) => {
@@ -117,194 +130,6 @@ test("agent integration config path abbreviates mac home paths", async ({ browse
   const configPath = page.locator(".adapter-config-path");
   await expect(configPath.locator("code")).toHaveText("~/.codex/hooks.json");
   await expect(configPath).toHaveAttribute("title", "/Users/elu/.codex/hooks.json");
-});
-
-test("agent integrations render Cursor and Pi in adapter order", async ({
-  browser,
-}) => {
-  const harness = await createAppHarness(browser, {
-    adapters: [
-      {
-        id: "claude-code",
-        displayName: "Claude Code",
-        configPath: "/home/.claude/settings.json",
-        installed: false,
-        healthy: false,
-        message: "Configuration path not created yet",
-      },
-      codexAdapter,
-      antigravityAdapter,
-      {
-        id: "opencode",
-        displayName: "OpenCode",
-        configPath: "/home/.config/opencode/plugins/copet.js",
-        installed: false,
-        healthy: false,
-        message: "Configuration path not created yet",
-      },
-      cursorAdapter,
-      copilotAdapter,
-      piAdapter,
-      {
-        id: "gemini",
-        displayName: "Gemini",
-        configPath: "/home/.gemini/settings.json",
-        installed: false,
-        healthy: false,
-        message: "Configuration path not created yet",
-      },
-    ],
-  });
-  const page = await harness.openPage("settings");
-  await page.getByRole("tab", { name: "Agents" }).click();
-
-  await expect(page.locator(".adapter-card-name")).toHaveText([
-    "Claude Code",
-    "Codex",
-    "Antigravity",
-    "OpenCode",
-    "Cursor",
-    "Copilot CLI",
-    "Pi",
-    "Gemini",
-  ]);
-  await expect(page.getByText("Cursor's agent hooks.")).toBeVisible();
-  await expect(page.getByText("GitHub Copilot's terminal agent.")).toBeVisible();
-  await expect(page.getByText("Pi coding agent extension.")).toBeVisible();
-});
-
-test("cursor integration switch installs and uninstalls the adapter", async ({
-  browser,
-}) => {
-  const harness = await createAppHarness(browser, {
-    adapters: [cursorAdapter],
-  });
-  const page = await harness.openPage("settings");
-  await page.getByRole("tab", { name: "Agents" }).click();
-  const cursorSwitch = page.getByRole("switch", { name: "Cursor" });
-
-  await expect(cursorSwitch).toHaveAttribute("aria-checked", "false");
-  await cursorSwitch.click();
-  await expect(cursorSwitch).toHaveAttribute("aria-checked", "true");
-
-  await cursorSwitch.click();
-  await expect(cursorSwitch).toHaveAttribute("aria-checked", "false");
-
-  const adapterCalls = harness.calls.filter(
-    (call) =>
-      call.command === "install_agent_adapter" ||
-      call.command === "uninstall_agent_adapter",
-  );
-  expect(adapterCalls).toEqual([
-    {
-      command: "install_agent_adapter",
-      args: { adapterId: "cursor" },
-    },
-    {
-      command: "uninstall_agent_adapter",
-      args: { adapterId: "cursor" },
-    },
-  ]);
-});
-
-test("pi integration switch installs and uninstalls the adapter", async ({ browser }) => {
-  const harness = await createAppHarness(browser, {
-    adapters: [piAdapter],
-  });
-  const page = await harness.openPage("settings");
-  await page.getByRole("tab", { name: "Agents" }).click();
-  const piSwitch = page.getByRole("switch", { name: "Pi" });
-
-  await expect(piSwitch).toHaveAttribute("aria-checked", "false");
-  await piSwitch.click();
-  await expect(piSwitch).toHaveAttribute("aria-checked", "true");
-
-  await piSwitch.click();
-  await expect(piSwitch).toHaveAttribute("aria-checked", "false");
-
-  const adapterCalls = harness.calls.filter(
-    (call) =>
-      call.command === "install_agent_adapter" ||
-      call.command === "uninstall_agent_adapter",
-  );
-  expect(adapterCalls).toEqual([
-    {
-      command: "install_agent_adapter",
-      args: { adapterId: "pi" },
-    },
-    {
-      command: "uninstall_agent_adapter",
-      args: { adapterId: "pi" },
-    },
-  ]);
-});
-
-test("copilot cli integration switch installs and uninstalls the adapter", async ({
-  browser,
-}) => {
-  const harness = await createAppHarness(browser, {
-    adapters: [copilotAdapter],
-  });
-  const page = await harness.openPage("settings");
-  await page.getByRole("tab", { name: "Agents" }).click();
-  const copilotSwitch = page.getByRole("switch", { name: "Copilot CLI" });
-
-  await expect(copilotSwitch).toHaveAttribute("aria-checked", "false");
-  await copilotSwitch.click();
-  await expect(copilotSwitch).toHaveAttribute("aria-checked", "true");
-
-  await copilotSwitch.click();
-  await expect(copilotSwitch).toHaveAttribute("aria-checked", "false");
-
-  const adapterCalls = harness.calls.filter(
-    (call) =>
-      call.command === "install_agent_adapter" ||
-      call.command === "uninstall_agent_adapter",
-  );
-  expect(adapterCalls).toEqual([
-    {
-      command: "install_agent_adapter",
-      args: { adapterId: "copilot" },
-    },
-    {
-      command: "uninstall_agent_adapter",
-      args: { adapterId: "copilot" },
-    },
-  ]);
-});
-
-test("antigravity integration switch installs and uninstalls the adapter", async ({
-  browser,
-}) => {
-  const harness = await createAppHarness(browser, {
-    adapters: [antigravityAdapter],
-  });
-  const page = await harness.openPage("settings");
-  await page.getByRole("tab", { name: "Agents" }).click();
-  const antigravitySwitch = page.getByRole("switch", { name: "Antigravity" });
-
-  await expect(antigravitySwitch).toHaveAttribute("aria-checked", "false");
-  await antigravitySwitch.click();
-  await expect(antigravitySwitch).toHaveAttribute("aria-checked", "true");
-
-  await antigravitySwitch.click();
-  await expect(antigravitySwitch).toHaveAttribute("aria-checked", "false");
-
-  const adapterCalls = harness.calls.filter(
-    (call) =>
-      call.command === "install_agent_adapter" ||
-      call.command === "uninstall_agent_adapter",
-  );
-  expect(adapterCalls).toEqual([
-    {
-      command: "install_agent_adapter",
-      args: { adapterId: "antigravity" },
-    },
-    {
-      command: "uninstall_agent_adapter",
-      args: { adapterId: "antigravity" },
-    },
-  ]);
 });
 
 test("settings page uses Chinese copy from app locale", async ({ browser }) => {

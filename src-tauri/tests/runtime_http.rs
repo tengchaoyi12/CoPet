@@ -1,4 +1,6 @@
-use copet_lib::{runtime_server::RuntimeManager, runtime_state::PetStateId};
+use copet_lib::{
+    runtime_server::RuntimeManager, runtime_state::PetStateId, task_notifications::TaskStatus,
+};
 use std::{
     fs,
     io::{Read, Write},
@@ -114,6 +116,30 @@ fn drop_releases_tcp_port_for_immediate_rebind() {
     );
     assert!(!runtime_dir.join("event-token").exists());
     assert!(!runtime_dir.join("event-endpoint").exists());
+}
+
+#[test]
+fn runtime_manager_clears_completed_task_notifications() {
+    let temp = tempfile::tempdir().unwrap();
+    let runtime_dir = temp.path().join("runtime");
+    let manager = RuntimeManager::start(&runtime_dir, |_| {}).unwrap();
+    let token = fs::read_to_string(runtime_dir.join("event-token")).unwrap();
+    for body in [
+        r#"{"agent":"codex","kind":"session.stop","sessionId":"completed","turnId":"turn-1"}"#,
+        r#"{"agent":"codex","kind":"permission.waiting","sessionId":"waiting","turnId":"turn-2"}"#,
+        r#"{"agent":"codex","kind":"session.error","sessionId":"failed","turnId":"turn-3"}"#,
+    ] {
+        let response = post_runtime_event(manager.port(), &token, body);
+        assert!(response.starts_with("HTTP/1.1 202 Accepted"));
+    }
+
+    let update = manager.clear_completed_task_notifications();
+
+    assert_eq!(update.notifications.len(), 2);
+    assert!(update
+        .notifications
+        .iter()
+        .all(|item| item.status != TaskStatus::Completed));
 }
 
 fn post_runtime_event(port: u16, token: &str, body: &str) -> String {

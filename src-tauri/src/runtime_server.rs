@@ -3,7 +3,7 @@ use std::{
     fs, io,
     io::{Read, Write},
     net::{SocketAddr, TcpListener, TcpStream},
-    path::Path,
+    path::{Path, PathBuf},
     sync::{
         atomic::{AtomicBool, Ordering},
         Arc, Mutex,
@@ -15,9 +15,11 @@ use std::{
 use crate::{
     diagnostics::RotatingLog,
     runtime_state::{
-        agent_display_name, normalize_runtime_event, BoundedEventQueue, DerivedPetState,
-        EventStateEngine, RuntimeEvent, TokenBucket,
+        agent_display_name, canonical_event_kind, normalize_runtime_event, BoundedEventQueue,
+        DerivedPetState, EventStateEngine, RuntimeEvent, TokenBucket,
     },
+    task_notifications::{TaskAttention, TaskNotification, TaskNotificationStore},
+    task_opener,
 };
 
 const MAX_EVENT_BODY_BYTES: usize = 16 * 1024;
@@ -93,6 +95,9 @@ pub fn handle_http_request(core: &mut RuntimeCore, request: &[u8], now_ms: u64) 
                 Err(RuntimeServerError::RateLimited) => {
                     response(429, r#"{"error":"rate_limited"}"#)
                 }
+                Err(RuntimeServerError::UnsupportedEvent) => {
+                    response(400, r#"{"error":"unsupported_event"}"#)
+                }
             }
         }
         Err(status) => response(status, r#"{"error":"bad_request"}"#),
@@ -117,7 +122,13 @@ impl RuntimeManager {
         let endpoint = format!("http://127.0.0.1:{port}/v1/events");
         RuntimeToken::write_endpoint(runtime_dir, &endpoint)?;
         let logger = RotatingLog::new(runtime_dir.join("agent-events.log"), 64 * 1024, 3);
-        let core = Arc::new(Mutex::new(RuntimeCore::new(token).with_logger(logger)));
+        let notification_path = runtime_dir.join("task-notifications.json");
+        let task_notifications = TaskNotificationStore::load(&notification_path, now_ms())?;
+        let core = Arc::new(Mutex::new(
+            RuntimeCore::new(token)
+                .with_task_notifications(task_notifications, notification_path)
+                .with_logger(logger),
+        ));
         dev_log_runtime(
             "server.started",
             serde_json::json!({
@@ -159,10 +170,12 @@ impl RuntimeManager {
                 let previous = core.status().current_state;
                 let next = core.advance_time(now_ms());
                 if next != previous {
-                    let messages = core.status().messages;
+                    let status = core.status();
                     tick_on_state(RuntimeUpdate {
                         current_state: next,
-                        messages,
+                        messages: status.messages,
+                        notifications: status.notifications,
+                        attention: None,
                     });
                 }
             })?;
@@ -206,6 +219,8 @@ impl RuntimeManager {
             endpoint: format!("http://127.0.0.1:{}/v1/events", self.port),
             current_state: status.current_state,
             messages: status.messages,
+            notifications: status.notifications,
+            attention: None,
             accepted_events: status.accepted_events,
             rejected_events: status.rejected_events,
         }
@@ -216,6 +231,29 @@ impl RuntimeManager {
             .lock()
             .expect("runtime core poisoned")
             .clear_agent_messages(agent)
+    }
+
+    pub fn clear_completed_task_notifications(&self) -> RuntimeUpdate {
+        self.core
+            .lock()
+            .expect("runtime core poisoned")
+            .clear_completed_task_notifications()
+    }
+
+    pub fn open_task_notification(&self, id: &str) -> Result<RuntimeUpdate, String> {
+        self.core
+            .lock()
+            .expect("runtime core poisoned")
+            .open_task_notification_with(id, |session_id| {
+                task_opener::open_codex_task(session_id).map_err(|error| error.to_string())
+            })
+    }
+
+    pub fn dismiss_task_notification(&self, id: &str) -> Result<RuntimeUpdate, String> {
+        self.core
+            .lock()
+            .expect("runtime core poisoned")
+            .dismiss_task_notification(id)
     }
 }
 
@@ -234,6 +272,9 @@ pub struct RuntimeCore {
     bucket: TokenBucket,
     messages: Vec<AgentMessage>,
     active_agents: HashSet<String>,
+    task_notifications: TaskNotificationStore,
+    latest_attention: Option<TaskAttention>,
+    notification_path: Option<PathBuf>,
     logger: Option<RotatingLog>,
     accepted_events: u64,
     rejected_events: u64,
@@ -248,6 +289,9 @@ impl RuntimeCore {
             bucket: TokenBucket::new(30, 60),
             messages: Vec::new(),
             active_agents: HashSet::new(),
+            task_notifications: TaskNotificationStore::default(),
+            latest_attention: None,
+            notification_path: None,
             logger: None,
             accepted_events: 0,
             rejected_events: 0,
@@ -256,6 +300,16 @@ impl RuntimeCore {
 
     pub fn with_logger(mut self, logger: RotatingLog) -> Self {
         self.logger = Some(logger);
+        self
+    }
+
+    pub fn with_task_notifications(
+        mut self,
+        task_notifications: TaskNotificationStore,
+        notification_path: PathBuf,
+    ) -> Self {
+        self.task_notifications = task_notifications;
+        self.notification_path = Some(notification_path);
         self
     }
 
@@ -297,7 +351,19 @@ impl RuntimeCore {
             return Err(RuntimeServerError::RateLimited);
         }
 
+        if canonical_event_kind(&event.kind).is_none() {
+            self.rejected_events += 1;
+            self.log_event("rejected_unsupported", &event, now_ms, None, None);
+            return Err(RuntimeServerError::UnsupportedEvent);
+        }
+
         let event = normalize_runtime_event(event);
+        self.latest_attention = None;
+        if event.agent == "codex" && event.session_id.is_some() {
+            let result = self.task_notifications.apply(event.clone(), now_ms);
+            self.latest_attention = result.attention;
+            self.save_task_notifications(now_ms);
+        }
         let suppress_event = self.should_suppress_event(&event);
         let message = if suppress_event {
             None
@@ -335,13 +401,20 @@ impl RuntimeCore {
             }),
         );
 
-        Ok(latest)
+        Ok(self.current_state())
     }
 
     pub fn status(&self) -> RuntimeStatus {
         RuntimeStatus {
-            current_state: self.engine.current(),
+            current_state: self.current_state(),
             messages: self.messages.clone(),
+            notifications: self
+                .task_notifications
+                .visible()
+                .into_iter()
+                .cloned()
+                .collect(),
+            attention: None,
             accepted_events: self.accepted_events,
             rejected_events: self.rejected_events,
         }
@@ -350,14 +423,92 @@ impl RuntimeCore {
     pub fn clear_agent_messages(&mut self, agent: &str) -> RuntimeUpdate {
         self.messages.retain(|message| message.agent != agent);
         self.active_agents.remove(agent);
+        self.runtime_update(None)
+    }
+
+    pub fn clear_completed_task_notifications(&mut self) -> RuntimeUpdate {
+        let changed = self.task_notifications.clear_completed();
+        self.messages.retain(|message| !message.is_completion);
+        if changed > 0 {
+            self.save_task_notifications(now_ms());
+        }
+        self.latest_attention = None;
+        self.runtime_update(None)
+    }
+
+    pub fn take_update(&mut self) -> RuntimeUpdate {
+        let attention = self.latest_attention.take();
+        self.runtime_update(attention)
+    }
+
+    fn runtime_update(&self, attention: Option<TaskAttention>) -> RuntimeUpdate {
+        let status = self.status();
         RuntimeUpdate {
-            current_state: self.engine.current(),
-            messages: self.messages.clone(),
+            current_state: status.current_state,
+            messages: status.messages,
+            notifications: status.notifications,
+            attention,
         }
     }
 
+    pub fn mark_task_notification_read(&mut self, id: &str) -> bool {
+        let changed = self.task_notifications.mark_read(id);
+        if changed {
+            self.save_task_notifications(now_ms());
+        }
+        changed
+    }
+
+    pub fn open_task_notification_with(
+        &mut self,
+        id: &str,
+        open: impl FnOnce(Option<&str>) -> Result<(), String>,
+    ) -> Result<RuntimeUpdate, String> {
+        let session_id = self
+            .task_notifications
+            .get(id)
+            .ok_or_else(|| "任务提醒不存在".to_string())?
+            .session_id
+            .clone();
+        open(session_id.as_deref())?;
+        self.mark_task_notification_read(id);
+        self.latest_attention = None;
+        Ok(self.take_update())
+    }
+
+    pub fn dismiss_task_notification(&mut self, id: &str) -> Result<RuntimeUpdate, String> {
+        if !self.task_notifications.dismiss(id) {
+            return Err("任务提醒不存在".to_string());
+        }
+        self.save_task_notifications(now_ms());
+        self.latest_attention = None;
+        Ok(self.take_update())
+    }
+
     pub fn advance_time(&mut self, now_ms: u64) -> DerivedPetState {
-        self.engine.advance_time(now_ms)
+        self.engine.advance_time(now_ms);
+        self.current_state()
+    }
+
+    fn current_state(&self) -> DerivedPetState {
+        let mut current = self.engine.current();
+        if let Some(state) = self.task_notifications.dominant_pet_state() {
+            current.state = state;
+            current.idle_after_ms = None;
+        }
+        current
+    }
+
+    fn save_task_notifications(&self, now_ms: u64) {
+        let Some(path) = self.notification_path.as_deref() else {
+            return;
+        };
+        if let Err(error) = self.task_notifications.save(path, now_ms) {
+            eprintln!(
+                "[copet:task-notifications:save] 无法保存 {}：{error}",
+                path.display()
+            );
+        }
     }
 
     fn log_event(
@@ -427,6 +578,7 @@ impl RuntimeCore {
 pub enum RuntimeServerError {
     Unauthorized,
     RateLimited,
+    UnsupportedEvent,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
@@ -434,6 +586,8 @@ pub enum RuntimeServerError {
 pub struct RuntimeStatus {
     pub current_state: DerivedPetState,
     pub messages: Vec<AgentMessage>,
+    pub notifications: Vec<TaskNotification>,
+    pub attention: Option<TaskAttention>,
     pub accepted_events: u64,
     pub rejected_events: u64,
 }
@@ -445,6 +599,8 @@ pub struct AgentMessage {
     pub display_name: String,
     pub text: String,
     pub updated_at_ms: u64,
+    #[serde(skip)]
+    is_completion: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
@@ -452,6 +608,8 @@ pub struct AgentMessage {
 pub struct RuntimeUpdate {
     pub current_state: DerivedPetState,
     pub messages: Vec<AgentMessage>,
+    pub notifications: Vec<TaskNotification>,
+    pub attention: Option<TaskAttention>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
@@ -461,6 +619,8 @@ pub struct RuntimeSnapshot {
     pub endpoint: String,
     pub current_state: DerivedPetState,
     pub messages: Vec<AgentMessage>,
+    pub notifications: Vec<TaskNotification>,
+    pub attention: Option<TaskAttention>,
     pub accepted_events: u64,
     pub rejected_events: u64,
 }
@@ -472,6 +632,7 @@ fn agent_message_for_event(event: &RuntimeEvent, now_ms: u64) -> Option<AgentMes
         display_name: agent_display_name(&event.agent).to_string(),
         text,
         updated_at_ms: now_ms,
+        is_completion: is_session_stop_kind(&event.kind),
     })
 }
 
@@ -790,16 +951,14 @@ fn handle_connection(
     let mut core = core.lock().expect("runtime core poisoned");
     let response = handle_http_request(&mut core, &buffer, now_ms());
     if response.status_code == 202 {
-        let status = core.status();
-        let update = RuntimeUpdate {
-            current_state: status.current_state,
-            messages: status.messages,
-        };
+        let update = core.take_update();
         dev_log_runtime(
             "tauri.emit.pet-state-changed",
             serde_json::json!({
                 "currentState": &update.current_state,
                 "messages": &update.messages,
+                "notifications": &update.notifications,
+                "attention": &update.attention,
             }),
         );
         on_state(update);
