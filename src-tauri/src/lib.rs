@@ -11,6 +11,7 @@ pub mod pet_registry;
 pub mod runtime_server;
 pub mod runtime_state;
 pub mod sound_pack;
+pub mod task_notifications;
 pub mod window_placement;
 
 use agents::{AdapterError, AdapterOperationResult, AdapterSummary, AgentManager};
