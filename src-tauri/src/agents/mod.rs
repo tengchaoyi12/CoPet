@@ -514,11 +514,18 @@ fn merge_hook_entries(
         .ok_or_else(|| AdapterError::InvalidJson(path.to_path_buf()))?;
 
     for event in events {
+        let event_timeout = if adapter_id == "codex"
+            && matches!(event.kind, "permission.waiting" | "session.stop")
+        {
+            600
+        } else {
+            timeout
+        };
         let mut group = json!({
             "hooks": [{
                 "type": "command",
                 "command": hook_command(adapter_id, helper_path, event.kind),
-                "timeout": timeout,
+                "timeout": event_timeout,
                 "statusMessage": "Updating CoPet"
             }]
         });
@@ -609,6 +616,10 @@ json_string_field_after_key() {
   printf '%s' "$compact_input" | sed -n 's/.*"'"$marker"'"[[:space:]]*:[[:space:]]*{.*"'"$key"'"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n 1
 }
 hook_output() {
+  if [ "$agent" = "codex" ] && [ "$kind" = "user.prompt" ]; then
+    printf '%s\n' '{"hookSpecificOutput":{"hookEventName":"UserPromptSubmit","additionalContext":"当且仅当任务无需用户提供信息、无需选择方案、无需权限审批且可以安全继续时，在最终回复末尾添加 <!-- copet:continue -->。需要用户抉择或输入时绝不能添加该标记。"}}'
+    return
+  fi
   if [ "$agent" = "antigravity" ]; then
     case "$kind" in
       tool.before|session.stop)
@@ -671,6 +682,37 @@ runtime="${COPET_RUNTIME_DIR:-$HOME/.copet/runtime}"
 endpoint="$(cat "$runtime/event-endpoint" 2>/dev/null)" || { hook_output ; exit 0; }
 token="$(cat "$runtime/event-token" 2>/dev/null)" || { hook_output ; exit 0; }
 [ -n "$endpoint" ] && [ -n "$token" ] || { hook_output ; exit 0; }
+if [ "$agent" = "codex" ]; then
+  use_action="false"
+  if [ "$kind" = "permission.waiting" ]; then
+    use_action="true"
+  elif [ "$kind" = "session.stop" ] \
+    && printf '%s' "$input" | grep -q '<!-- copet:continue -->' \
+    && ! printf '%s' "$compact_input" | grep -q '"stop_hook_active"[[:space:]]*:[[:space:]]*true'; then
+    use_action="true"
+  fi
+  if [ "$use_action" = "true" ]; then
+    action_endpoint="${endpoint%/v1/events}/v1/actions"
+    action_payload="$(printf '{"agent":"codex","kind":"%s","hookInput":%s}' "$(json_escape "$kind")" "$input")"
+    registration="$(curl -fsS --noproxy '*' --max-time 0.8 -H "Authorization: Bearer $token" -H "Content-Type: application/json" --data-binary "$action_payload" "$action_endpoint" 2>/dev/null)"
+    action_id="$(printf '%s' "$registration" | sed -n 's/.*"actionId"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n 1)"
+    if [ -n "$action_id" ]; then
+      decision_endpoint="${action_endpoint}/${action_id}/decision"
+      decision_json="$(curl -fsS --noproxy '*' --max-time 590 -H "Authorization: Bearer $token" "$decision_endpoint" 2>/dev/null)"
+      decision="$(printf '%s' "$decision_json" | sed -n 's/.*"decision"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n 1)"
+      if [ "$kind" = "permission.waiting" ] && [ "$decision" = "allowOnce" ]; then
+        printf '%s\n' '{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decision":{"behavior":"allow"}}}'
+        exit 0
+      fi
+      if [ "$kind" = "session.stop" ] && [ "$decision" = "continueOnce" ]; then
+        printf '%s\n' '{"decision":"block","reason":"用户已在 CoPet 确认继续执行。请继续完成当前任务，不要再次询问是否继续。"}'
+        exit 0
+      fi
+      hook_output
+      exit 0
+    fi
+  fi
+fi
 tool_field=""
 if [ -n "$tool" ]; then
   escaped_tool="$(json_escape "$tool")"

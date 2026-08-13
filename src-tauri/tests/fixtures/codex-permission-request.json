@@ -1,0 +1,11 @@
+{
+  "session_id": "thread-123",
+  "turn_id": "turn-456",
+  "run_id_suffix": "approval-789",
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "pnpm test",
+    "description": "运行测试"
+  },
+  "cwd": "/repo"
+}

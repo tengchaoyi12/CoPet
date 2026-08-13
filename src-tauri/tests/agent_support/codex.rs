@@ -68,9 +68,90 @@ fn capture_codex_helper_request(kind: &str, input: &str) -> String {
         .unwrap();
     let output = child.wait_with_output().unwrap();
     assert!(output.status.success());
-    assert_eq!(String::from_utf8_lossy(&output.stdout), "{}\n");
+    if kind == "user.prompt" {
+        assert!(String::from_utf8_lossy(&output.stdout).contains("additionalContext"));
+    } else {
+        assert_eq!(String::from_utf8_lossy(&output.stdout), "{}\n");
+    }
 
     receiver.join().unwrap()
+}
+
+fn run_codex_action_helper(kind: &str, input: &str, decision: &str) -> (String, Vec<String>) {
+    let temp = tempfile::tempdir().unwrap();
+    let home = temp.path().join("home");
+    let root = temp.path().join(".copet");
+    let runtime = temp.path().join("runtime");
+    let manager = manager_with_fake_agents(&root, &home);
+    manager.install("codex").unwrap();
+
+    let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let endpoint = format!(
+        "http://127.0.0.1:{}/v1/events",
+        listener.local_addr().unwrap().port()
+    );
+    fs::create_dir_all(&runtime).unwrap();
+    fs::write(runtime.join("event-endpoint"), endpoint).unwrap();
+    fs::write(runtime.join("event-token"), "secret").unwrap();
+    let decision = decision.to_string();
+    let receiver = std::thread::spawn(move || {
+        let mut requests = Vec::new();
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while requests.len() < 2 && Instant::now() < deadline {
+            let (mut stream, _) = match listener.accept() {
+                Ok(connection) => connection,
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                    std::thread::sleep(Duration::from_millis(10));
+                    continue;
+                }
+                Err(error) => panic!("action listener failed: {error}"),
+            };
+            stream
+                .set_read_timeout(Some(Duration::from_secs(2)))
+                .unwrap();
+            let mut buffer = [0_u8; 8192];
+            let size = stream.read(&mut buffer).unwrap();
+            requests.push(String::from_utf8_lossy(&buffer[..size]).to_string());
+            let body = if requests.len() == 1 {
+                r#"{"actionId":"action-1","expiresAtMs":600000}"#.to_string()
+            } else {
+                format!(r#"{{"state":"resolved","decision":"{decision}"}}"#)
+            };
+            let status = if requests.len() == 1 {
+                "202 Accepted"
+            } else {
+                "200 OK"
+            };
+            let response = format!(
+                "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                body.len(), body
+            );
+            stream.write_all(response.as_bytes()).unwrap();
+        }
+        requests
+    });
+
+    let mut child = Command::new(root.join("hooks/copet-hook.sh"))
+        .args(["codex", kind])
+        .env("COPET_RUNTIME_DIR", &runtime)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    child
+        .stdin
+        .as_mut()
+        .unwrap()
+        .write_all(input.as_bytes())
+        .unwrap();
+    let output = child.wait_with_output().unwrap();
+    assert!(output.status.success());
+
+    (
+        String::from_utf8_lossy(&output.stdout).to_string(),
+        receiver.join().unwrap(),
+    )
 }
 
 #[test]
@@ -91,6 +172,121 @@ fn codex_install_writes_hooks_json_and_enables_hooks_feature() {
     assert!(hooks.contains("tool.before"));
     assert!(config.contains("[features]"));
     assert!(config.contains("hooks = true"));
+}
+
+#[test]
+fn codex_user_prompt_submit_injects_strict_continue_marker_contract() {
+    let temp = tempfile::tempdir().unwrap();
+    let home = temp.path().join("home");
+    let root = temp.path().join(".copet");
+    let runtime = temp.path().join("missing-runtime");
+    let manager = manager_with_fake_agents(&root, &home);
+    manager.install("codex").unwrap();
+
+    let mut child = Command::new(root.join("hooks/copet-hook.sh"))
+        .args(["codex", "user.prompt"])
+        .env("COPET_RUNTIME_DIR", &runtime)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    child
+        .stdin
+        .as_mut()
+        .unwrap()
+        .write_all(r#"{"session_id":"thread-1","turn_id":"turn-1","prompt":"继续任务"}"#.as_bytes())
+        .unwrap();
+    let output = child.wait_with_output().unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    assert!(stdout.contains(r#""hookEventName":"UserPromptSubmit""#));
+    assert!(stdout.contains("additionalContext"));
+    assert!(stdout.contains("copet:continue"));
+    assert!(stdout.contains("无需用户提供信息"));
+}
+
+#[test]
+fn codex_permission_request_returns_native_allow_once_output() {
+    let input = include_str!("../fixtures/codex-permission-request.json");
+
+    let (stdout, requests) = run_codex_action_helper("permission.waiting", input, "allowOnce");
+
+    assert_eq!(
+        stdout,
+        "{\"hookSpecificOutput\":{\"hookEventName\":\"PermissionRequest\",\"decision\":{\"behavior\":\"allow\"}}}\n"
+    );
+    assert!(requests[0].contains("POST /v1/actions"));
+    assert!(requests[0].contains(r#""hookInput""#));
+    assert!(requests[0].contains(r#""run_id_suffix": "approval-789""#));
+    assert!(requests[1].contains("GET /v1/actions/action-1/decision"));
+}
+
+#[test]
+fn codex_stop_continue_returns_native_block_output() {
+    let input = include_str!("../fixtures/codex-stop-continue.json");
+
+    let (stdout, requests) = run_codex_action_helper("session.stop", input, "continueOnce");
+
+    assert!(stdout.contains(r#""decision":"block""#));
+    assert!(stdout.contains("用户已在 CoPet 确认继续执行"));
+    assert!(requests[0].contains("POST /v1/actions"));
+    assert!(requests[0].contains("copet:continue"));
+}
+
+#[test]
+fn codex_action_fallback_outputs_empty_object() {
+    let input = include_str!("../fixtures/codex-permission-request.json");
+
+    let (stdout, _) = run_codex_action_helper("permission.waiting", input, "fallback");
+
+    assert_eq!(stdout, "{}\n");
+}
+
+#[test]
+fn codex_stop_hook_active_does_not_register_another_action() {
+    let temp = tempfile::tempdir().unwrap();
+    let home = temp.path().join("home");
+    let root = temp.path().join(".copet");
+    let runtime = temp.path().join("missing-runtime");
+    let manager = manager_with_fake_agents(&root, &home);
+    manager.install("codex").unwrap();
+    let mut child = Command::new(root.join("hooks/copet-hook.sh"))
+        .args(["codex", "session.stop"])
+        .env("COPET_RUNTIME_DIR", &runtime)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    child
+        .stdin
+        .as_mut()
+        .unwrap()
+        .write_all(r#"{"session_id":"thread-1","turn_id":"turn-1","stop_hook_active":true,"last_assistant_message":"继续。<!-- copet:continue -->"}"#.as_bytes())
+        .unwrap();
+    let output = child.wait_with_output().unwrap();
+
+    assert_eq!(String::from_utf8_lossy(&output.stdout), "{}\n");
+}
+
+#[test]
+fn codex_action_hooks_use_ten_minute_timeout() {
+    let temp = tempfile::tempdir().unwrap();
+    let home = temp.path().join("home");
+    let root = temp.path().join(".copet");
+    let manager = manager_with_fake_agents(&root, &home);
+    manager.install("codex").unwrap();
+
+    let hooks = read_json(&home.join(".codex/hooks.json"));
+
+    assert_eq!(
+        hooks["hooks"]["PermissionRequest"][0]["hooks"][0]["timeout"],
+        600
+    );
+    assert_eq!(hooks["hooks"]["Stop"][0]["hooks"][0]["timeout"], 600);
+    assert_eq!(
+        hooks["hooks"]["UserPromptSubmit"][0]["hooks"][0]["timeout"],
+        1
+    );
 }
 
 #[test]
@@ -643,11 +839,11 @@ fn codex_trusted_hash_matches_golden_for_pinned_fixture() {
         ),
         (
             "permission_request",
-            "sha256:19639a89d0ee6194c730dca327234c193ae734d49c0bd14416684e4b4d3322f3",
+            "sha256:efc71064fba8bd5bc44edc4548ea0ec04917c0b77099304e47d3d014b9dc51e7",
         ),
         (
             "stop",
-            "sha256:159a17cbd3dabd50826a788c0da2247589e8c0c17b6dbde13d082fd467fb230d",
+            "sha256:d84ebe79adfa3a279b0cfbab8c02e79ee322b8f595d2ea1406ca65ef733de00f",
         ),
     ];
 

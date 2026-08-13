@@ -1,0 +1,6 @@
+{
+  "session_id": "thread-123",
+  "turn_id": "turn-456",
+  "stop_hook_active": false,
+  "last_assistant_message": "测试已通过，可以继续构建。\n<!-- copet:continue -->"
+}
