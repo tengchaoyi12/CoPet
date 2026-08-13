@@ -5,8 +5,9 @@ use sha2::{Digest, Sha256};
 use toml_edit::{value, DocumentMut, Item, Table};
 
 use super::super::{
-    install_json_hooks, json_config_has_copet_hooks, read_json_object_optional, remove_json_hooks,
-    write_atomic, AdapterError, AgentManager, CliAdapter, HookEvent, HELPER_NAME,
+    hook_command, install_json_hooks, json_config_has_copet_hooks, read_json_object_optional,
+    remove_json_hooks, write_atomic, write_json_atomic, AdapterError, AgentManager, CliAdapter,
+    HookEvent, HELPER_NAME,
 };
 
 pub(super) static ADAPTER: CodexCliAdapter = CodexCliAdapter;
@@ -78,6 +79,15 @@ impl CliAdapter for CodexCliAdapter {
         })
     }
 
+    fn refresh(&self, manager: &AgentManager) -> Result<(), AdapterError> {
+        let hooks_path = self.config_path(manager.home());
+        refresh_codex_hooks_in_place(manager, &hooks_path)?;
+        update_codex_config_toml(manager.home(), |document, config_path| {
+            set_features_hooks_true(document, config_path)?;
+            apply_trusted_hashes(document, &hooks_path, config_path)
+        })
+    }
+
     fn uninstall(&self, manager: &AgentManager) -> Result<(), AdapterError> {
         let hooks_path = self.config_path(manager.home());
         remove_json_hooks(manager, self.id(), &hooks_path)?;
@@ -90,6 +100,75 @@ impl CliAdapter for CodexCliAdapter {
     fn executable_names(&self) -> &'static [&'static str] {
         &["codex"]
     }
+}
+
+fn refresh_codex_hooks_in_place(manager: &AgentManager, path: &Path) -> Result<(), AdapterError> {
+    manager.backup_file("codex", path)?;
+    let mut value = read_json_object_optional(path)?.unwrap_or_else(|| serde_json::json!({}));
+    let object = value
+        .as_object_mut()
+        .ok_or_else(|| AdapterError::InvalidJson(path.to_path_buf()))?;
+    let hooks = object
+        .entry("hooks")
+        .or_insert_with(|| serde_json::json!({}))
+        .as_object_mut()
+        .ok_or_else(|| AdapterError::InvalidJson(path.to_path_buf()))?;
+
+    for event in EVENTS {
+        let timeout = if matches!(event.kind, "permission.waiting" | "session.stop") {
+            600
+        } else {
+            1
+        };
+        let command = hook_command("codex", &manager.helper_path(), event.kind);
+        let groups = hooks
+            .entry(event.cli_event)
+            .or_insert_with(|| serde_json::json!([]))
+            .as_array_mut()
+            .ok_or_else(|| AdapterError::InvalidJson(path.to_path_buf()))?;
+        let mut refreshed = false;
+        for group in groups.iter_mut() {
+            let Some(handlers) = group
+                .get_mut("hooks")
+                .and_then(serde_json::Value::as_array_mut)
+            else {
+                continue;
+            };
+            let Some(handler) = handlers.iter_mut().find(|handler| {
+                handler
+                    .get("command")
+                    .and_then(serde_json::Value::as_str)
+                    .is_some_and(|candidate| {
+                        candidate.contains(HELPER_NAME)
+                            && candidate.contains(&format!(" codex {}", event.kind))
+                    })
+            }) else {
+                continue;
+            };
+            handler["type"] = serde_json::json!("command");
+            handler["command"] = serde_json::json!(command);
+            handler["timeout"] = serde_json::json!(timeout);
+            handler["statusMessage"] = serde_json::json!("Updating CoPet");
+            refreshed = true;
+            break;
+        }
+        if !refreshed {
+            let mut group = serde_json::json!({
+                "hooks": [{
+                    "type": "command",
+                    "command": command,
+                    "timeout": timeout,
+                    "statusMessage": "Updating CoPet"
+                }]
+            });
+            if let Some(matcher) = event.matcher {
+                group["matcher"] = serde_json::json!(matcher);
+            }
+            groups.push(group);
+        }
+    }
+
+    write_json_atomic(path, &value)
 }
 
 fn codex_hooks_are_current(path: &Path) -> Result<bool, AdapterError> {
@@ -285,9 +364,16 @@ fn canonical_json(value: &serde_json::Value) -> serde_json::Value {
 }
 
 /// Mirrors hook_key from openai/codex-rs/hooks/src/lib.rs:91.
-/// CoPet always writes one group / one handler per event, so indexes are 0:0.
-fn hook_state_key(hooks_file_abs_path: &Path, event_label: &str) -> String {
-    format!("{}:{event_label}:0:0", hooks_file_abs_path.display())
+fn hook_state_key(
+    hooks_file_abs_path: &Path,
+    event_label: &str,
+    group_index: usize,
+    handler_index: usize,
+) -> String {
+    format!(
+        "{}:{event_label}:{group_index}:{handler_index}",
+        hooks_file_abs_path.display()
+    )
 }
 
 /// Codex hook_event_key_label snake-case label for each Codex `cli_event` CoPet uses.
@@ -346,12 +432,12 @@ fn apply_trusted_hashes(
             continue;
         };
         // Iterate every group/handler CoPet wrote (today: exactly 1 group, 1 handler each).
-        for group in groups.iter() {
+        for (group_index, group) in groups.iter().enumerate() {
             let matcher = group.get("matcher").and_then(serde_json::Value::as_str);
             let Some(handlers) = group.get("hooks").and_then(serde_json::Value::as_array) else {
                 continue;
             };
-            for handler in handlers.iter() {
+            for (handler_index, handler) in handlers.iter().enumerate() {
                 let Some(command) = handler.get("command").and_then(serde_json::Value::as_str)
                 else {
                     continue;
@@ -374,7 +460,8 @@ fn apply_trusted_hashes(
                     timeout_sec,
                     status_message,
                 };
-                let key = hook_state_key(hooks_file_abs_path, event_label);
+                let key =
+                    hook_state_key(hooks_file_abs_path, event_label, group_index, handler_index);
                 let trusted_hash = compute_trusted_hash(&descriptor)?;
                 let entry = state_table
                     .entry(&key)

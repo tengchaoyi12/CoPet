@@ -372,6 +372,106 @@ fn run_agent_auto_install_once_repairs_stale_codex_action_timeouts_after_complet
 }
 
 #[test]
+fn run_agent_auto_install_once_refreshes_existing_legacy_helper_during_codex_migration() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().join(".copet");
+    let home = temp.path().join("home");
+    let store = ConfigStore::new(&root);
+    store.ensure_ready().unwrap();
+    let manager = manager_with_fake_agent_names(&root, &home, &["codex"]);
+
+    run_agent_auto_install_once(&store, &manager).unwrap();
+    let helper_path = root.join("hooks/copet-hook.sh");
+    fs::write(&helper_path, "#!/bin/sh\nprintf '{}\\n'\n").unwrap();
+    let hooks_path = home.join(".codex/hooks.json");
+    let mut hooks = read_json(&hooks_path);
+    hooks["hooks"]["PermissionRequest"][0]["hooks"][0]["timeout"] = 1.into();
+    fs::write(&hooks_path, serde_json::to_vec_pretty(&hooks).unwrap()).unwrap();
+
+    let summary = run_agent_auto_install_once(&store, &manager).unwrap();
+
+    assert_eq!(summary.installed, vec!["codex".to_string()]);
+    assert!(summary.failed.is_empty());
+    let helper = fs::read_to_string(helper_path).unwrap();
+    assert!(
+        helper.contains("/v1/actions"),
+        "legacy helper was not refreshed"
+    );
+    assert!(helper.contains("permission.waiting"));
+}
+
+#[test]
+fn run_agent_auto_install_once_preserves_user_hook_order_and_trusted_hash_during_codex_migration() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().join(".copet");
+    let home = temp.path().join("home");
+    let store = ConfigStore::new(&root);
+    store.ensure_ready().unwrap();
+    let manager = manager_with_fake_agent_names(&root, &home, &["codex"]);
+
+    run_agent_auto_install_once(&store, &manager).unwrap();
+    let hooks_path = home.join(".codex/hooks.json");
+    let mut hooks = read_json(&hooks_path);
+    hooks["hooks"]["PermissionRequest"][0]["hooks"][0]["timeout"] = 1.into();
+    hooks["hooks"]["PermissionRequest"]
+        .as_array_mut()
+        .unwrap()
+        .insert(
+            0,
+            serde_json::json!({
+                "matcher": "*",
+                "hooks": [{
+                    "type": "command",
+                    "command": "echo user-owned",
+                    "timeout": 30
+                }]
+            }),
+        );
+    fs::write(&hooks_path, serde_json::to_vec_pretty(&hooks).unwrap()).unwrap();
+
+    let config_path = home.join(".codex/config.toml");
+    let config = fs::read_to_string(&config_path).unwrap();
+    let hooks_abs = hooks_path.display().to_string();
+    let user_key = format!("{hooks_abs}:permission_request:0:0");
+    let parsed = config.parse::<toml::Value>().unwrap();
+    let old_hash = parsed["hooks"]["state"][&user_key]["trusted_hash"]
+        .as_str()
+        .unwrap();
+    let config = config.replace(
+        &format!("trusted_hash = \"{old_hash}\""),
+        "trusted_hash = \"sha256:user-owned\"",
+    );
+    fs::write(&config_path, config).unwrap();
+
+    let summary = run_agent_auto_install_once(&store, &manager).unwrap();
+
+    assert_eq!(summary.installed, vec!["codex".to_string()]);
+    assert!(summary.failed.is_empty());
+    let repaired = read_json(&hooks_path);
+    let permission_groups = repaired["hooks"]["PermissionRequest"].as_array().unwrap();
+    assert_eq!(
+        permission_groups[0]["hooks"][0]["command"],
+        "echo user-owned"
+    );
+    assert!(permission_groups[1]["hooks"][0]["command"]
+        .as_str()
+        .unwrap()
+        .contains("copet-hook.sh"));
+    assert_eq!(permission_groups[1]["hooks"][0]["timeout"], 600);
+
+    let config = fs::read_to_string(config_path).unwrap();
+    let parsed = config.parse::<toml::Value>().unwrap();
+    assert_eq!(
+        parsed["hooks"]["state"][&user_key]["trusted_hash"].as_str(),
+        Some("sha256:user-owned")
+    );
+    let copet_key = format!("{hooks_abs}:permission_request:1:0");
+    assert!(parsed["hooks"]["state"][&copet_key]["trusted_hash"]
+        .as_str()
+        .is_some_and(|hash| hash.starts_with("sha256:")));
+}
+
+#[test]
 fn run_agent_auto_install_once_marks_complete_even_when_adapter_fails() {
     let temp = tempfile::tempdir().unwrap();
     let root = temp.path().join(".copet");

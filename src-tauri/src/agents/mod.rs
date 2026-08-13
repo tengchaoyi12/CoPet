@@ -92,6 +92,9 @@ pub(crate) trait CliAdapter: Sync {
         config_path: &Path,
     ) -> Result<bool, AdapterError>;
     fn install(&self, manager: &AgentManager) -> Result<(), AdapterError>;
+    fn refresh(&self, manager: &AgentManager) -> Result<(), AdapterError> {
+        self.install(manager)
+    }
     fn uninstall(&self, manager: &AgentManager) -> Result<(), AdapterError>;
     fn executable_names(&self) -> &'static [&'static str];
 }
@@ -275,8 +278,25 @@ impl AgentManager {
                 return summary;
             }
         }
-        match self.install(id) {
-            Ok(_) => summary.installed.push(id.to_string()),
+        let adapter = match adapter_by_id(id) {
+            Ok(adapter) => adapter,
+            Err(error) => {
+                summary.failed.push(AutoInstallFailure {
+                    adapter_id: id.to_string(),
+                    error: error.to_string(),
+                });
+                return summary;
+            }
+        };
+        if let Err(error) = self.ensure_helper() {
+            summary.failed.push(AutoInstallFailure {
+                adapter_id: id.to_string(),
+                error: error.to_string(),
+            });
+            return summary;
+        }
+        match adapter.refresh(self) {
+            Ok(()) => summary.installed.push(id.to_string()),
             Err(error) => summary.failed.push(AutoInstallFailure {
                 adapter_id: id.to_string(),
                 error: error.to_string(),
