@@ -12,6 +12,7 @@ pub mod pet_registry;
 pub mod runtime_server;
 pub mod runtime_state;
 pub mod sound_pack;
+pub mod task_actions;
 pub mod task_notifications;
 pub mod task_opener;
 pub mod window_placement;

@@ -8,6 +8,7 @@ use std::{
 use serde::{Deserialize, Serialize};
 
 use crate::runtime_state::{agent_display_name, normalize_runtime_event, PetStateId, RuntimeEvent};
+use crate::task_actions::TaskAction;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -48,6 +49,8 @@ pub struct TaskNotification {
     pub status: TaskStatus,
     pub title: Option<String>,
     pub summary: Option<String>,
+    #[serde(default)]
+    pub action: Option<TaskAction>,
     pub unread: bool,
     pub updated_at_ms: u64,
 }
@@ -147,6 +150,7 @@ impl TaskNotificationStore {
         let summary = event
             .summary
             .or_else(|| existing.as_ref().and_then(|task| task.summary.clone()));
+        let action = existing.as_ref().and_then(|task| task.action.clone());
         let unread = attention.is_some()
             || existing
                 .as_ref()
@@ -162,6 +166,7 @@ impl TaskNotificationStore {
                 status,
                 title,
                 summary,
+                action,
                 unread,
                 updated_at_ms: now_ms,
             },
@@ -215,6 +220,14 @@ impl TaskNotificationStore {
         self.notifications.get(id)
     }
 
+    pub fn attach_action(&mut self, id: &str, action: TaskAction) -> bool {
+        let Some(task) = self.notifications.get_mut(id) else {
+            return false;
+        };
+        task.action = Some(action);
+        true
+    }
+
     pub fn dismiss(&mut self, id: &str) -> bool {
         self.notifications.remove(id).is_some()
     }
@@ -227,6 +240,11 @@ impl TaskNotificationStore {
     }
 
     fn prune_for_persistence(&mut self, now_ms: u64) {
+        for task in self.notifications.values_mut() {
+            if let Some(action) = task.action.as_mut() {
+                action.expire();
+            }
+        }
         let mut retained = self
             .notifications
             .values()

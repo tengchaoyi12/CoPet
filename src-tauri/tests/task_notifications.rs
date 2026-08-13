@@ -1,5 +1,6 @@
 use copet_lib::{
     runtime_state::{PetStateId, RuntimeEvent},
+    task_actions::{TaskAction, TaskActionState},
     task_notifications::{AttentionKind, TaskNotificationStore, TaskStatus},
 };
 use serde_json::json;
@@ -296,4 +297,34 @@ fn clear_completed_is_idempotent_without_completed_notifications() {
         .map(|item| (item.id.clone(), item.status))
         .collect::<Vec<_>>();
     assert_eq!(after, before);
+}
+
+#[test]
+fn restored_notification_does_not_restore_executable_action() {
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("task-notifications.json");
+    let mut store = TaskNotificationStore::default();
+    store.apply(
+        event("permission.waiting", Some("thread-1"), Some("turn-1"), None),
+        100,
+    );
+    assert!(store.attach_action(
+        "codex:thread-1:turn-1",
+        TaskAction::permission_once(
+            "action-1",
+            "运行测试",
+            "Bash",
+            Some("pnpm test"),
+            Some("/repo"),
+            600_000,
+            true,
+        ),
+    ));
+    store.save(&path, 200).unwrap();
+
+    let restored = TaskNotificationStore::load(&path, 300).unwrap();
+    let action = restored.visible()[0].action.as_ref().unwrap();
+
+    assert_eq!(action.state, TaskActionState::Expired);
+    assert!(!action.quick_action_allowed);
 }
