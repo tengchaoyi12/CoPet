@@ -344,6 +344,34 @@ fn run_agent_auto_install_once_restores_helper_when_missing_after_completion() {
 }
 
 #[test]
+fn run_agent_auto_install_once_repairs_stale_codex_action_timeouts_after_completion() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().join(".copet");
+    let home = temp.path().join("home");
+    let store = ConfigStore::new(&root);
+    store.ensure_ready().unwrap();
+    let manager = manager_with_fake_agent_names(&root, &home, &["codex"]);
+
+    run_agent_auto_install_once(&store, &manager).unwrap();
+    let hooks_path = home.join(".codex/hooks.json");
+    let mut hooks = read_json(&hooks_path);
+    hooks["hooks"]["PermissionRequest"][0]["hooks"][0]["timeout"] = 1.into();
+    hooks["hooks"]["Stop"][0]["hooks"][0]["timeout"] = 1.into();
+    fs::write(&hooks_path, serde_json::to_vec_pretty(&hooks).unwrap()).unwrap();
+
+    let summary = run_agent_auto_install_once(&store, &manager).unwrap();
+
+    assert_eq!(summary.installed, vec!["codex".to_string()]);
+    assert!(summary.failed.is_empty());
+    let repaired = read_json(&hooks_path);
+    assert_eq!(
+        repaired["hooks"]["PermissionRequest"][0]["hooks"][0]["timeout"],
+        600
+    );
+    assert_eq!(repaired["hooks"]["Stop"][0]["hooks"][0]["timeout"], 600);
+}
+
+#[test]
 fn run_agent_auto_install_once_marks_complete_even_when_adapter_fails() {
     let temp = tempfile::tempdir().unwrap();
     let root = temp.path().join(".copet");

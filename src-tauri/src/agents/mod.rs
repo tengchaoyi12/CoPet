@@ -259,6 +259,32 @@ impl AgentManager {
         summary
     }
 
+    pub fn refresh_managed_install_if_stale(&self, id: &str) -> AutoInstallSummary {
+        let mut summary = AutoInstallSummary::default();
+        if !self.metadata_path(id).exists() {
+            return summary;
+        }
+        match self.inspect(id) {
+            Ok(current) if current.installed => return summary,
+            Ok(_) => {}
+            Err(error) => {
+                summary.failed.push(AutoInstallFailure {
+                    adapter_id: id.to_string(),
+                    error: error.to_string(),
+                });
+                return summary;
+            }
+        }
+        match self.install(id) {
+            Ok(_) => summary.installed.push(id.to_string()),
+            Err(error) => summary.failed.push(AutoInstallFailure {
+                adapter_id: id.to_string(),
+                error: error.to_string(),
+            }),
+        }
+        summary
+    }
+
     pub(crate) fn home(&self) -> &Path {
         &self.home
     }

@@ -5,8 +5,8 @@ use sha2::{Digest, Sha256};
 use toml_edit::{value, DocumentMut, Item, Table};
 
 use super::super::{
-    install_json_hooks, json_config_has_copet_hook, remove_json_hooks, write_atomic, AdapterError,
-    AgentManager, CliAdapter, HookEvent,
+    install_json_hooks, json_config_has_copet_hooks, read_json_object_optional, remove_json_hooks,
+    write_atomic, AdapterError, AgentManager, CliAdapter, HookEvent, HELPER_NAME,
 };
 
 pub(super) static ADAPTER: CodexCliAdapter = CodexCliAdapter;
@@ -66,7 +66,7 @@ impl CliAdapter for CodexCliAdapter {
         _manager: &AgentManager,
         config_path: &Path,
     ) -> Result<bool, AdapterError> {
-        json_config_has_copet_hook(config_path, self.id())
+        codex_hooks_are_current(config_path)
     }
 
     fn install(&self, manager: &AgentManager) -> Result<(), AdapterError> {
@@ -90,6 +90,54 @@ impl CliAdapter for CodexCliAdapter {
     fn executable_names(&self) -> &'static [&'static str] {
         &["codex"]
     }
+}
+
+fn codex_hooks_are_current(path: &Path) -> Result<bool, AdapterError> {
+    if !json_config_has_copet_hooks(path, "codex", EVENTS)? {
+        return Ok(false);
+    }
+    let Some(value) = read_json_object_optional(path)? else {
+        return Ok(false);
+    };
+    let Some(hooks) = value.get("hooks").and_then(serde_json::Value::as_object) else {
+        return Ok(false);
+    };
+
+    Ok(EVENTS.iter().all(|event| {
+        let expected_timeout = if matches!(event.kind, "permission.waiting" | "session.stop") {
+            600
+        } else {
+            1
+        };
+        hooks
+            .get(event.cli_event)
+            .and_then(serde_json::Value::as_array)
+            .is_some_and(|groups| {
+                groups.iter().any(|group| {
+                    if event.matcher.is_some()
+                        && group.get("matcher").and_then(serde_json::Value::as_str) != event.matcher
+                    {
+                        return false;
+                    }
+                    group
+                        .get("hooks")
+                        .and_then(serde_json::Value::as_array)
+                        .is_some_and(|handlers| {
+                            handlers.iter().any(|handler| {
+                                handler
+                                    .get("command")
+                                    .and_then(serde_json::Value::as_str)
+                                    .is_some_and(|command| {
+                                        command.contains(HELPER_NAME)
+                                            && command.contains(&format!(" codex {}", event.kind))
+                                    })
+                                    && handler.get("timeout").and_then(serde_json::Value::as_u64)
+                                        == Some(expected_timeout)
+                            })
+                        })
+                })
+            })
+    }))
 }
 
 fn codex_config_path(home: &Path) -> PathBuf {

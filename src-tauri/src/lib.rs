@@ -1032,7 +1032,7 @@ pub fn run_agent_auto_install_once(
     }
 
     if store.agent_auto_install_complete()? {
-        return Ok(agents::AutoInstallSummary::default());
+        return Ok(manager.refresh_managed_install_if_stale("codex"));
     }
 
     let summary = manager.auto_install_selected(&["codex"]);
