@@ -107,7 +107,7 @@ select {
   gap: 3px;
   width: fit-content;
   min-width: var(--pet-agent-message-min-width, 0);
-  max-width: min(220px, calc(100vw - 20px));
+  max-width: min(300px, calc(100vw - 20px));
   padding: 3px 5px;
   border: 0;
   box-shadow:
@@ -154,7 +154,7 @@ select {
 .pet-task-notification {
   position: relative;
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 6px;
   min-width: 0;
   margin: 0 -4px;
@@ -177,7 +177,9 @@ select {
 }
 
 .pet-task-notification-status,
-.pet-task-notification-title {
+.pet-task-notification-title,
+.pet-task-notification-summary,
+.pet-task-action-details > * {
   overflow: hidden;
   overflow-wrap: anywhere;
   text-overflow: ellipsis;
@@ -190,6 +192,69 @@ select {
 .pet-task-notification-title {
   color: hsl(var(--muted-foreground));
   white-space: nowrap;
+}
+
+.pet-task-notification-summary {
+  display: -webkit-box;
+  color: hsl(var(--foreground));
+  line-height: 1.35;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
+}
+
+.pet-task-action-details {
+  display: grid;
+  gap: 2px;
+  margin-top: 3px;
+  color: hsl(var(--muted-foreground));
+  font-size: 10px;
+}
+
+.pet-task-action-details code {
+  padding: 2px 3px;
+  border-radius: 3px;
+  background: hsl(var(--muted) / 0.7);
+  color: hsl(var(--foreground));
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  white-space: nowrap;
+}
+
+.pet-task-action-details strong {
+  color: hsl(var(--foreground));
+}
+
+.pet-task-action-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 5px;
+}
+
+.pet-task-action-buttons button {
+  min-height: 22px;
+  padding: 3px 7px;
+  border: 1px solid hsl(var(--border));
+  border-radius: 4px;
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.pet-task-action-buttons button:disabled {
+  cursor: wait;
+  opacity: 0.55;
+}
+
+.pet-task-action-primary {
+  border-color: hsl(var(--primary)) !important;
+  background: hsl(var(--primary));
+  color: hsl(var(--primary-foreground));
+}
+
+.pet-task-action-secondary {
+  background: hsl(var(--card));
+  color: hsl(var(--foreground));
 }
 
 .pet-agent-message:hover {

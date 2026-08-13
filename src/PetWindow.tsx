@@ -337,8 +337,18 @@ export function PetWindow() {
         >
           {displayedTaskNotifications.length > 0 ? (
             <TaskNotifications
+              busyActionIds={taskNotifications.busyActionIds}
               notifications={displayedTaskNotifications}
+              onAllowOnce={(actionId) =>
+                void taskNotifications.allowOnce(actionId)
+              }
+              onContinueOnce={(actionId) =>
+                void taskNotifications.continueOnce(actionId)
+              }
               onDismiss={(id) => void taskNotifications.dismiss(id)}
+              onFallbackAndOpen={(notificationId, actionId) =>
+                void taskNotifications.fallbackAndOpen(notificationId, actionId)
+              }
               onOpen={(id) => void taskNotifications.open(id)}
             />
           ) : null}

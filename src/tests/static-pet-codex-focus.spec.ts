@@ -77,6 +77,7 @@ function completedNotification(): TaskNotification {
     summary: "任务执行完成",
     unread: true,
     updatedAtMs: 100,
+    action: null,
   };
 }
 

@@ -19,6 +19,7 @@ import type {
   PetWindowSize,
   RuntimeStatus,
   RuntimeUpdate,
+  TaskActionDecision,
 } from "./appTypes";
 
 export type CommandResult = { errorMessage: string | null };
@@ -155,11 +156,14 @@ export async function setAutostartEnabled(
 }
 
 async function runTaskNotificationCommand(
-  command: "open_task_notification" | "dismiss_task_notification",
-  id: string,
+  command:
+    | "open_task_notification"
+    | "dismiss_task_notification"
+    | "resolve_task_action",
+  args: { id: string; decision?: TaskActionDecision },
 ): Promise<CommandResult> {
   try {
-    const update = await invoke<RuntimeUpdate>(command, { id });
+    const update = await invoke<RuntimeUpdate>(command, args);
     appStore.patch({
       petState: update.currentState.state,
       agentMessages: update.messages,
@@ -173,11 +177,18 @@ async function runTaskNotificationCommand(
 }
 
 export function openTaskNotification(id: string): Promise<CommandResult> {
-  return runTaskNotificationCommand("open_task_notification", id);
+  return runTaskNotificationCommand("open_task_notification", { id });
 }
 
 export function dismissTaskNotification(id: string): Promise<CommandResult> {
-  return runTaskNotificationCommand("dismiss_task_notification", id);
+  return runTaskNotificationCommand("dismiss_task_notification", { id });
+}
+
+export function resolveTaskAction(
+  id: string,
+  decision: TaskActionDecision,
+): Promise<CommandResult> {
+  return runTaskNotificationCommand("resolve_task_action", { id, decision });
 }
 
 export async function setLocalePreference(

@@ -25,6 +25,7 @@ function notification(
     summary: status === "completed" ? "任务执行完成" : null,
     unread: status !== "running",
     updatedAtMs,
+    action: null,
   };
 }
 

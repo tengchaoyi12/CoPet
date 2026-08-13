@@ -145,6 +145,25 @@ export type AgentMessage = {
 
 export type TaskStatus = "running" | "waiting" | "completed" | "failed";
 
+export type TaskActionKind = "continue" | "permission";
+
+export type TaskActionState = "pending" | "resolving" | "expired";
+
+export type TaskActionDecision = "continueOnce" | "allowOnce" | "fallback";
+
+export type TaskAction = {
+  id: string;
+  kind: TaskActionKind;
+  state: TaskActionState;
+  label: string;
+  requestedAction: string;
+  toolName: string | null;
+  command: string | null;
+  cwd: string | null;
+  expiresAtMs: number;
+  quickActionAllowed: boolean;
+};
+
 export type TaskNotification = {
   id: string;
   agent: string;
@@ -156,6 +175,7 @@ export type TaskNotification = {
   summary: string | null;
   unread: boolean;
   updatedAtMs: number;
+  action: TaskAction | null;
 };
 
 export type TaskAttention = {

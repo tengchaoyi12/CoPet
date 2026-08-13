@@ -85,6 +85,20 @@ export type TaskNotification = {
   summary: string | null;
   unread: boolean;
   updatedAtMs: number;
+  action: TaskAction | null;
+};
+
+export type TaskAction = {
+  id: string;
+  kind: "continue" | "permission";
+  state: "pending" | "resolving" | "expired";
+  label: string;
+  requestedAction: string;
+  toolName: string | null;
+  command: string | null;
+  cwd: string | null;
+  expiresAtMs: number;
+  quickActionAllowed: boolean;
 };
 
 export type TaskAttention = {
@@ -489,6 +503,57 @@ export async function createAppHarness(browser: Browser, options: AppHarnessOpti
             ...runtimeStatus,
             notifications: (runtimeStatus.notifications ?? []).filter(
               (notification) => notification.id !== args.id,
+            ),
+            attention: null,
+          };
+          await emitRuntimeStatus();
+          return {
+            currentState: runtimeStatus.currentState,
+            messages: runtimeStatus.messages,
+            notifications: runtimeStatus.notifications ?? [],
+            attention: null,
+          };
+        }
+        if (command === "resolve_task_action") {
+          const actionId = args.id as string;
+          const decision = args.decision as
+            | "continueOnce"
+            | "allowOnce"
+            | "fallback";
+          const target = (runtimeStatus.notifications ?? []).find(
+            (notification) => notification.action?.id === actionId,
+          );
+          if (!target?.action || target.action.state !== "pending") {
+            throw new Error("任务操作已失效");
+          }
+          if (
+            (decision === "continueOnce" && target.action.kind !== "continue") ||
+            (decision === "allowOnce" && target.action.kind !== "permission")
+          ) {
+            throw new Error("任务操作类型不匹配");
+          }
+          runtimeStatus = {
+            ...runtimeStatus,
+            currentState:
+              decision === "fallback"
+                ? runtimeStatus.currentState
+                : { state: "running", sinceMs: Date.now(), idleAfterMs: null },
+            notifications: (runtimeStatus.notifications ?? []).map((notification) =>
+              notification.id === target.id
+                ? {
+                    ...notification,
+                    status: decision === "fallback" ? "waiting" : "running",
+                    unread: decision === "fallback",
+                    action:
+                      decision === "fallback"
+                        ? {
+                            ...target.action!,
+                            state: "expired",
+                            quickActionAllowed: false,
+                          }
+                        : null,
+                  }
+                : notification,
             ),
             attention: null,
           };
