@@ -27,6 +27,7 @@ use runtime_server::{RuntimeManager, RuntimeSnapshot, RuntimeUpdate};
 use sound_pack::SoundPackSummary;
 use std::path::PathBuf;
 use std::time::Duration;
+use task_actions::TaskActionDecision;
 use tauri::{
     menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem, Submenu},
     path::BaseDirectory,
@@ -693,6 +694,18 @@ fn dismiss_task_notification(
 }
 
 #[tauri::command]
+fn resolve_task_action(
+    app: tauri::AppHandle,
+    id: String,
+    decision: TaskActionDecision,
+    runtime: tauri::State<'_, RuntimeManager>,
+) -> Result<RuntimeUpdate, String> {
+    let update = runtime.resolve_task_action(&id, decision)?;
+    emit_runtime_update(&app, update.clone());
+    Ok(update)
+}
+
+#[tauri::command]
 fn open_codex() -> Result<(), String> {
     task_opener::open_codex_task(None).map_err(|error| error.to_string())
 }
@@ -1242,6 +1255,7 @@ pub fn run() {
             open_codex,
             open_task_notification,
             dismiss_task_notification,
+            resolve_task_action,
             open_settings_window,
             list_agent_adapters,
             install_agent_adapter,

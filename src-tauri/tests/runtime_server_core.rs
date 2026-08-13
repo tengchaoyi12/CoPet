@@ -2,13 +2,29 @@ use copet_lib::{
     diagnostics::RotatingLog,
     runtime_server::{handle_http_request, RuntimeCore, RuntimeServerError, RuntimeToken},
     runtime_state::{normalize_runtime_event, PetStateId, RuntimeEvent},
+    task_actions::{ActionRegistry, TaskActionDecision, WaitDecision},
     task_notifications::{AttentionKind, TaskNotificationStore, TaskStatus},
 };
 use serde_json::json;
 use std::{
     fs,
+    sync::Arc,
     time::{SystemTime, UNIX_EPOCH},
 };
+
+fn register_action(core: &mut RuntimeCore, body: &str, now_ms: u64) -> String {
+    let request = format!(
+        "POST /v1/actions HTTP/1.1\r\nAuthorization: Bearer secret\r\nContent-Length: {}\r\n\r\n{}",
+        body.len(),
+        body
+    );
+    let response = handle_http_request(core, request.as_bytes(), now_ms);
+    assert_eq!(response.status_code, 202, "{}", response.body);
+    serde_json::from_str::<serde_json::Value>(&response.body).unwrap()["actionId"]
+        .as_str()
+        .unwrap()
+        .to_string()
+}
 
 #[test]
 fn runtime_event_accepts_codex_task_fields() {
@@ -813,6 +829,79 @@ fn authenticated_action_request_returns_unique_action_id() {
             .tool_name
             .as_deref(),
         Some("Bash")
+    );
+}
+
+#[test]
+fn continue_once_resolves_only_target_and_moves_it_to_running() {
+    let actions = Arc::new(ActionRegistry::default());
+    let mut core = RuntimeCore::new_with_actions("secret".to_string(), Arc::clone(&actions));
+    let body = r#"{"agent":"codex","kind":"session.stop","hookInput":{"session_id":"thread-1","turn_id":"turn-1","stop_hook_active":false,"last_assistant_message":"可以继续。<!-- copet:continue -->"}}"#;
+    let id = register_action(&mut core, body, 100);
+
+    let update = core
+        .resolve_task_action(&id, TaskActionDecision::ContinueOnce, 200)
+        .unwrap();
+
+    assert_eq!(update.notifications[0].status, TaskStatus::Running);
+    assert!(update.notifications[0].action.is_none());
+    assert_eq!(
+        actions.take_decision(&id, 200),
+        WaitDecision::Resolved(TaskActionDecision::ContinueOnce)
+    );
+}
+
+#[test]
+fn allow_once_rejects_wrong_action_kind_without_resolving() {
+    let actions = Arc::new(ActionRegistry::default());
+    let mut core = RuntimeCore::new_with_actions("secret".to_string(), Arc::clone(&actions));
+    let body = r#"{"agent":"codex","kind":"session.stop","hookInput":{"session_id":"thread-1","turn_id":"turn-1","stop_hook_active":false,"last_assistant_message":"可以继续。<!-- copet:continue -->"}}"#;
+    let id = register_action(&mut core, body, 100);
+
+    let error = core
+        .resolve_task_action(&id, TaskActionDecision::AllowOnce, 200)
+        .unwrap_err();
+
+    assert!(error.contains("类型"));
+    assert_eq!(actions.take_decision(&id, 200), WaitDecision::Pending);
+    assert_eq!(core.status().notifications[0].status, TaskStatus::Waiting);
+}
+
+#[test]
+fn fallback_expires_action_but_keeps_notification_openable() {
+    let actions = Arc::new(ActionRegistry::default());
+    let mut core = RuntimeCore::new_with_actions("secret".to_string(), Arc::clone(&actions));
+    let body = r#"{"agent":"codex","kind":"permission.waiting","hookInput":{"session_id":"thread-1","turn_id":"turn-1","run_id_suffix":"approval-1","tool_name":"Bash","tool_input":{"command":"pnpm test"},"cwd":"/repo"}}"#;
+    let id = register_action(&mut core, body, 100);
+
+    let update = core
+        .resolve_task_action(&id, TaskActionDecision::Fallback, 200)
+        .unwrap();
+
+    assert_eq!(update.notifications[0].status, TaskStatus::Waiting);
+    let action = update.notifications[0].action.as_ref().unwrap();
+    assert!(!action.quick_action_allowed);
+    assert_eq!(
+        actions.take_decision(&id, 200),
+        WaitDecision::Resolved(TaskActionDecision::Fallback)
+    );
+}
+
+#[test]
+fn dismiss_pending_action_falls_back_before_removing_notification() {
+    let actions = Arc::new(ActionRegistry::default());
+    let mut core = RuntimeCore::new_with_actions("secret".to_string(), Arc::clone(&actions));
+    let body = r#"{"agent":"codex","kind":"permission.waiting","hookInput":{"session_id":"thread-1","turn_id":"turn-1","run_id_suffix":"approval-1","tool_name":"Bash","tool_input":{"command":"pnpm test"},"cwd":"/repo"}}"#;
+    let id = register_action(&mut core, body, 100);
+
+    let update = core
+        .dismiss_task_notification_at("codex:thread-1:turn-1", 200)
+        .unwrap();
+
+    assert!(update.notifications.is_empty());
+    assert_eq!(
+        actions.take_decision(&id, 200),
+        WaitDecision::Resolved(TaskActionDecision::Fallback)
     );
 }
 

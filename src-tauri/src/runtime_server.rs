@@ -277,7 +277,18 @@ impl RuntimeManager {
         self.core
             .lock()
             .expect("runtime core poisoned")
-            .dismiss_task_notification(id)
+            .dismiss_task_notification_at(id, now_ms())
+    }
+
+    pub fn resolve_task_action(
+        &self,
+        id: &str,
+        decision: TaskActionDecision,
+    ) -> Result<RuntimeUpdate, String> {
+        self.core
+            .lock()
+            .expect("runtime core poisoned")
+            .resolve_task_action(id, decision, now_ms())
     }
 }
 
@@ -607,11 +618,41 @@ impl RuntimeCore {
         Ok(self.take_update())
     }
 
+    pub fn resolve_task_action(
+        &mut self,
+        id: &str,
+        decision: TaskActionDecision,
+        now_ms: u64,
+    ) -> Result<RuntimeUpdate, String> {
+        self.task_notifications.validate_action(id, decision)?;
+        self.actions.resolve(id, decision, now_ms)?;
+        self.task_notifications.transition_action(id, decision)?;
+        self.save_task_notifications(now_ms);
+        self.latest_attention = None;
+        Ok(self.take_update())
+    }
+
     pub fn dismiss_task_notification(&mut self, id: &str) -> Result<RuntimeUpdate, String> {
+        self.dismiss_task_notification_at(id, now_ms())
+    }
+
+    pub fn dismiss_task_notification_at(
+        &mut self,
+        id: &str,
+        now_ms: u64,
+    ) -> Result<RuntimeUpdate, String> {
+        if let Some(action_id) = self
+            .task_notifications
+            .pending_action_id(id)
+            .map(str::to_string)
+        {
+            self.actions
+                .resolve(&action_id, TaskActionDecision::Fallback, now_ms)?;
+        }
         if !self.task_notifications.dismiss(id) {
             return Err("任务提醒不存在".to_string());
         }
-        self.save_task_notifications(now_ms());
+        self.save_task_notifications(now_ms);
         self.latest_attention = None;
         Ok(self.take_update())
     }

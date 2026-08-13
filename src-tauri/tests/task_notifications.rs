@@ -1,6 +1,6 @@
 use copet_lib::{
     runtime_state::{PetStateId, RuntimeEvent},
-    task_actions::{TaskAction, TaskActionState},
+    task_actions::{TaskAction, TaskActionDecision, TaskActionState},
     task_notifications::{AttentionKind, TaskNotificationStore, TaskStatus},
 };
 use serde_json::json;
@@ -327,4 +327,44 @@ fn restored_notification_does_not_restore_executable_action() {
 
     assert_eq!(action.state, TaskActionState::Expired);
     assert!(!action.quick_action_allowed);
+}
+
+#[test]
+fn resolved_continue_action_transitions_only_matching_notification_to_running() {
+    let mut store = TaskNotificationStore::default();
+    store.apply(
+        event("session.waiting", Some("thread-1"), Some("turn-1"), None),
+        100,
+    );
+    store.apply(
+        event("permission.waiting", Some("thread-2"), Some("turn-2"), None),
+        100,
+    );
+    store.attach_action(
+        "codex:thread-1:turn-1",
+        TaskAction::continue_once("continue-1", "继续", 1_000),
+    );
+    store.attach_action(
+        "codex:thread-2:turn-2",
+        TaskAction::permission_once(
+            "permission-2",
+            "运行测试",
+            "Bash",
+            Some("pnpm test"),
+            Some("/repo"),
+            1_000,
+            true,
+        ),
+    );
+
+    store
+        .transition_action("continue-1", TaskActionDecision::ContinueOnce)
+        .unwrap();
+
+    let first = store.get("codex:thread-1:turn-1").unwrap();
+    let second = store.get("codex:thread-2:turn-2").unwrap();
+    assert_eq!(first.status, TaskStatus::Running);
+    assert!(first.action.is_none());
+    assert_eq!(second.status, TaskStatus::Waiting);
+    assert_eq!(second.action.as_ref().unwrap().id, "permission-2");
 }

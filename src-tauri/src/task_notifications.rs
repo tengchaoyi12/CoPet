@@ -8,7 +8,7 @@ use std::{
 use serde::{Deserialize, Serialize};
 
 use crate::runtime_state::{agent_display_name, normalize_runtime_event, PetStateId, RuntimeEvent};
-use crate::task_actions::TaskAction;
+use crate::task_actions::{TaskAction, TaskActionDecision, TaskActionKind, TaskActionState};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -226,6 +226,70 @@ impl TaskNotificationStore {
         };
         task.action = Some(action);
         true
+    }
+
+    pub fn pending_action_id(&self, notification_id: &str) -> Option<&str> {
+        self.notifications
+            .get(notification_id)?
+            .action
+            .as_ref()
+            .filter(|action| action.state == TaskActionState::Pending)
+            .map(|action| action.id.as_str())
+    }
+
+    pub fn validate_action(
+        &self,
+        action_id: &str,
+        decision: TaskActionDecision,
+    ) -> Result<(), String> {
+        let action = self
+            .notifications
+            .values()
+            .find_map(|task| task.action.as_ref().filter(|action| action.id == action_id))
+            .ok_or_else(|| "任务操作已失效".to_string())?;
+        if action.state != TaskActionState::Pending {
+            return Err("任务操作已处理".to_string());
+        }
+        let compatible = matches!(
+            (action.kind, decision),
+            (TaskActionKind::Continue, TaskActionDecision::ContinueOnce)
+                | (TaskActionKind::Permission, TaskActionDecision::AllowOnce)
+                | (_, TaskActionDecision::Fallback)
+        );
+        if !compatible {
+            return Err("任务操作类型不匹配".to_string());
+        }
+        if decision != TaskActionDecision::Fallback && !action.quick_action_allowed {
+            return Err("该任务操作不能快捷处理".to_string());
+        }
+        Ok(())
+    }
+
+    pub fn transition_action(
+        &mut self,
+        action_id: &str,
+        decision: TaskActionDecision,
+    ) -> Result<(), String> {
+        self.validate_action(action_id, decision)?;
+        let task = self
+            .notifications
+            .values_mut()
+            .find(|task| {
+                task.action
+                    .as_ref()
+                    .is_some_and(|action| action.id == action_id)
+            })
+            .expect("validated action disappeared");
+        if decision == TaskActionDecision::Fallback {
+            if let Some(action) = task.action.as_mut() {
+                action.expire();
+            }
+        } else {
+            task.status = TaskStatus::Running;
+            task.unread = false;
+            task.action = None;
+        }
+        Ok(())
     }
 
     pub fn dismiss(&mut self, id: &str) -> bool {
