@@ -1,4 +1,9 @@
 use serde::{Deserialize, Serialize};
+use std::{
+    collections::HashMap,
+    sync::{Condvar, Mutex},
+    time::{Duration, Instant},
+};
 
 pub const CONTINUE_MARKER: &str = "<!-- copet:continue -->";
 
@@ -15,6 +20,144 @@ pub enum TaskActionState {
     Pending,
     Resolving,
     Expired,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum TaskActionDecision {
+    ContinueOnce,
+    AllowOnce,
+    Fallback,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WaitDecision {
+    Pending,
+    Resolved(TaskActionDecision),
+    Expired,
+    Stale,
+}
+
+#[derive(Debug)]
+struct ActionEntry {
+    kind: TaskActionKind,
+    expires_at_ms: u64,
+    decision: Option<TaskActionDecision>,
+}
+
+#[derive(Debug, Default)]
+pub struct ActionRegistry {
+    entries: Mutex<HashMap<String, ActionEntry>>,
+    changed: Condvar,
+}
+
+impl ActionRegistry {
+    pub fn register(&self, kind: TaskActionKind, expires_at_ms: u64) -> String {
+        let mut bytes = [0_u8; 16];
+        let _ = getrandom::getrandom(&mut bytes);
+        let id: String = bytes.iter().map(|byte| format!("{byte:02x}")).collect();
+        self.entries
+            .lock()
+            .expect("action registry poisoned")
+            .insert(
+                id.clone(),
+                ActionEntry {
+                    kind,
+                    expires_at_ms,
+                    decision: None,
+                },
+            );
+        id
+    }
+
+    pub fn resolve(
+        &self,
+        id: &str,
+        decision: TaskActionDecision,
+        now_ms: u64,
+    ) -> Result<(), String> {
+        let mut entries = self.entries.lock().expect("action registry poisoned");
+        let entry = entries
+            .get_mut(id)
+            .ok_or_else(|| "任务操作已失效".to_string())?;
+        if now_ms > entry.expires_at_ms {
+            entries.remove(id);
+            return Err("任务操作已过期".to_string());
+        }
+        if entry.decision.is_some() {
+            return Err("任务操作已处理".to_string());
+        }
+        let compatible = matches!(
+            (entry.kind, decision),
+            (TaskActionKind::Continue, TaskActionDecision::ContinueOnce)
+                | (TaskActionKind::Permission, TaskActionDecision::AllowOnce)
+                | (_, TaskActionDecision::Fallback)
+        );
+        if !compatible {
+            return Err("任务操作类型不匹配".to_string());
+        }
+        entry.decision = Some(decision);
+        self.changed.notify_all();
+        Ok(())
+    }
+
+    pub fn take_decision(&self, id: &str, now_ms: u64) -> WaitDecision {
+        let mut entries = self.entries.lock().expect("action registry poisoned");
+        let Some(entry) = entries.get(id) else {
+            return WaitDecision::Stale;
+        };
+        if now_ms > entry.expires_at_ms {
+            entries.remove(id);
+            return WaitDecision::Expired;
+        }
+        let Some(decision) = entry.decision else {
+            return WaitDecision::Pending;
+        };
+        entries.remove(id);
+        WaitDecision::Resolved(decision)
+    }
+
+    pub fn wait_decision(&self, id: &str, now_ms: u64, timeout: Duration) -> WaitDecision {
+        let deadline = Instant::now() + timeout;
+        let mut entries = self.entries.lock().expect("action registry poisoned");
+        loop {
+            let Some(entry) = entries.get(id) else {
+                return WaitDecision::Stale;
+            };
+            if now_ms > entry.expires_at_ms {
+                entries.remove(id);
+                return WaitDecision::Expired;
+            }
+            if let Some(decision) = entry.decision {
+                entries.remove(id);
+                return WaitDecision::Resolved(decision);
+            }
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                entries.remove(id);
+                return WaitDecision::Expired;
+            }
+            let (next, wait) = self
+                .changed
+                .wait_timeout(entries, remaining)
+                .expect("action registry poisoned");
+            entries = next;
+            if wait.timed_out() {
+                entries.remove(id);
+                return WaitDecision::Expired;
+            }
+        }
+    }
+
+    pub fn resolve_all_fallback(&self) {
+        let mut entries = self.entries.lock().expect("action registry poisoned");
+        for entry in entries.values_mut() {
+            if entry.decision.is_none() {
+                entry.decision = Some(TaskActionDecision::Fallback);
+            }
+        }
+        self.changed.notify_all();
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

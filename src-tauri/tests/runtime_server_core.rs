@@ -787,6 +787,36 @@ fn http_handler_accepts_event_posts() {
 }
 
 #[test]
+fn authenticated_action_request_returns_unique_action_id() {
+    let mut core = RuntimeCore::new("secret".to_string());
+    let body = r#"{"agent":"codex","kind":"permission.waiting","hookInput":{"session_id":"thread-1","turn_id":"turn-1","run_id_suffix":"approval-1","tool_name":"Bash","tool_input":{"command":"pnpm test","description":"运行测试"},"cwd":"/repo"}}"#;
+    let request = format!(
+        "POST /v1/actions HTTP/1.1\r\nAuthorization: Bearer secret\r\nContent-Length: {}\r\n\r\n{}",
+        body.len(),
+        body
+    );
+
+    let first = handle_http_request(&mut core, request.as_bytes(), 100);
+    let second = handle_http_request(&mut core, request.as_bytes(), 101);
+
+    assert_eq!(first.status_code, 202);
+    assert_eq!(second.status_code, 202);
+    let first_json: serde_json::Value = serde_json::from_str(&first.body).unwrap();
+    let second_json: serde_json::Value = serde_json::from_str(&second.body).unwrap();
+    assert_ne!(first_json["actionId"], second_json["actionId"]);
+    assert_eq!(core.status().notifications.len(), 1);
+    assert_eq!(
+        core.status().notifications[0]
+            .action
+            .as_ref()
+            .unwrap()
+            .tool_name
+            .as_deref(),
+        Some("Bash")
+    );
+}
+
+#[test]
 fn http_handler_accepts_cli_style_snake_case_event_payloads() {
     let mut core = RuntimeCore::new("secret".to_string());
     let body = r#"{"agent":"opencode","kind":"tool.before","tool":"Read","tool_input":{"filePath":"/repo/src/App.tsx"},"session_id":"session-1"}"#;

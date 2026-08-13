@@ -18,6 +18,10 @@ use crate::{
         agent_display_name, canonical_event_kind, normalize_runtime_event, BoundedEventQueue,
         DerivedPetState, EventStateEngine, RuntimeEvent, TokenBucket,
     },
+    task_actions::{
+        allows_quick_continue, ActionRegistry, TaskAction, TaskActionDecision, TaskActionKind,
+        WaitDecision,
+    },
     task_notifications::{TaskAttention, TaskNotification, TaskNotificationStore},
     task_opener,
 };
@@ -59,16 +63,32 @@ pub struct HttpResponse {
 pub fn handle_http_request(core: &mut RuntimeCore, request: &[u8], now_ms: u64) -> HttpResponse {
     match parse_http_request(request) {
         Ok(request) => {
-            if request.method != "POST" || request.path != "/v1/events" {
-                return response(404, r#"{"error":"not_found"}"#);
-            }
-
             if request.content_length > MAX_EVENT_BODY_BYTES {
                 return response(413, r#"{"error":"body_too_large"}"#);
             }
 
             if request.body.len() < request.content_length {
                 return response(400, r#"{"error":"incomplete_body"}"#);
+            }
+
+            if request.method == "POST" && request.path == "/v1/actions" {
+                if request.authorization.as_deref()
+                    != Some(format!("Bearer {}", core.token).as_str())
+                {
+                    return response(401, r#"{"error":"unauthorized"}"#);
+                }
+                let action = match serde_json::from_slice::<ActionHookRequest>(&request.body) {
+                    Ok(action) => action,
+                    Err(_) => return response(400, r#"{"error":"invalid_json"}"#),
+                };
+                return match core.register_action(action, now_ms) {
+                    Ok(registration) => response_json(202, &registration),
+                    Err(error) => response_json(400, &serde_json::json!({ "error": error })),
+                };
+            }
+
+            if request.method != "POST" || request.path != "/v1/events" {
+                return response(404, r#"{"error":"not_found"}"#);
             }
 
             let event = match serde_json::from_slice::<RuntimeEvent>(&request.body) {
@@ -109,6 +129,7 @@ pub struct RuntimeManager {
     port: u16,
     runtime_dir: std::path::PathBuf,
     shutdown: Arc<AtomicBool>,
+    actions: Arc<ActionRegistry>,
 }
 
 impl RuntimeManager {
@@ -124,8 +145,9 @@ impl RuntimeManager {
         let logger = RotatingLog::new(runtime_dir.join("agent-events.log"), 64 * 1024, 3);
         let notification_path = runtime_dir.join("task-notifications.json");
         let task_notifications = TaskNotificationStore::load(&notification_path, now_ms())?;
+        let actions = Arc::new(ActionRegistry::default());
         let core = Arc::new(Mutex::new(
-            RuntimeCore::new(token)
+            RuntimeCore::new_with_actions(token, Arc::clone(&actions))
                 .with_task_notifications(task_notifications, notification_path)
                 .with_logger(logger),
         ));
@@ -155,7 +177,7 @@ impl RuntimeManager {
                     }
                     let core = Arc::clone(&server_core);
                     let on_state = Arc::clone(&on_state);
-                    handle_connection(stream, core, on_state.as_ref());
+                    thread::spawn(move || handle_connection(stream, core, on_state.as_ref()));
                 }
             })?;
 
@@ -185,6 +207,7 @@ impl RuntimeManager {
             port,
             runtime_dir: runtime_dir.to_path_buf(),
             shutdown,
+            actions,
         })
     }
 
@@ -207,6 +230,7 @@ impl RuntimeManager {
             return; // already shut down by a prior call
         }
         let addr = SocketAddr::from(([127, 0, 0, 1], self.port));
+        self.actions.resolve_all_fallback();
         let _ = TcpStream::connect_timeout(&addr, Duration::from_millis(50));
         let _ = RuntimeToken::invalidate(&self.runtime_dir);
         let _ = fs::remove_file(self.runtime_dir.join("event-endpoint"));
@@ -267,6 +291,7 @@ impl Drop for RuntimeManager {
 
 pub struct RuntimeCore {
     token: String,
+    actions: Arc<ActionRegistry>,
     engine: EventStateEngine,
     queue: BoundedEventQueue,
     bucket: TokenBucket,
@@ -282,8 +307,13 @@ pub struct RuntimeCore {
 
 impl RuntimeCore {
     pub fn new(token: String) -> Self {
+        Self::new_with_actions(token, Arc::new(ActionRegistry::default()))
+    }
+
+    pub fn new_with_actions(token: String, actions: Arc<ActionRegistry>) -> Self {
         Self {
             token,
+            actions,
             engine: EventStateEngine::new(),
             queue: BoundedEventQueue::new(50),
             bucket: TokenBucket::new(30, 60),
@@ -296,6 +326,107 @@ impl RuntimeCore {
             accepted_events: 0,
             rejected_events: 0,
         }
+    }
+
+    fn register_action(
+        &mut self,
+        request: ActionHookRequest,
+        now_ms: u64,
+    ) -> Result<ActionRegistration, String> {
+        if request.agent != "codex" {
+            return Err("unsupported_agent".to_string());
+        }
+        let session_id = json_text(&request.hook_input, "session_id")
+            .or_else(|| json_text(&request.hook_input, "sessionId"))
+            .ok_or_else(|| "missing_session_id".to_string())?;
+        let turn_id = json_text(&request.hook_input, "turn_id")
+            .or_else(|| json_text(&request.hook_input, "turnId"))
+            .ok_or_else(|| "missing_turn_id".to_string())?;
+        let expires_at_ms = now_ms.saturating_add(ACTION_TTL_MS);
+        let (kind, action, event_kind) = match request.kind.as_str() {
+            "permission.waiting" => {
+                let tool_name = json_text(&request.hook_input, "tool_name")
+                    .or_else(|| json_text(&request.hook_input, "toolName"))
+                    .unwrap_or("unknown");
+                let tool_input = request.hook_input.get("tool_input").cloned();
+                let command = tool_input
+                    .as_ref()
+                    .and_then(|value| json_text(value, "command"));
+                let description = tool_input
+                    .as_ref()
+                    .and_then(|value| json_text(value, "description"))
+                    .unwrap_or("执行当前工具操作");
+                let cwd = json_text(&request.hook_input, "cwd");
+                let quick_allowed = tool_name != "unknown" && command.is_some();
+                let id = self
+                    .actions
+                    .register(TaskActionKind::Permission, expires_at_ms);
+                let action = TaskAction::permission_once(
+                    &id,
+                    description,
+                    tool_name,
+                    command,
+                    cwd,
+                    expires_at_ms,
+                    quick_allowed,
+                );
+                (TaskActionKind::Permission, action, "permission.waiting")
+            }
+            "session.stop" => {
+                let message = json_text(&request.hook_input, "last_assistant_message")
+                    .or_else(|| json_text(&request.hook_input, "lastAssistantMessage"))
+                    .unwrap_or_default();
+                let stop_active = request
+                    .hook_input
+                    .get("stop_hook_active")
+                    .or_else(|| request.hook_input.get("stopHookActive"))
+                    .and_then(serde_json::Value::as_bool)
+                    .unwrap_or(false);
+                if !allows_quick_continue(message, stop_active) {
+                    return Err("quick_continue_not_allowed".to_string());
+                }
+                let id = self
+                    .actions
+                    .register(TaskActionKind::Continue, expires_at_ms);
+                let action = TaskAction::continue_once(&id, "继续完成当前任务", expires_at_ms);
+                (TaskActionKind::Continue, action, "session.waiting")
+            }
+            _ => return Err("unsupported_action_kind".to_string()),
+        };
+        let id = action.id.clone();
+        let event = RuntimeEvent {
+            agent: "codex".to_string(),
+            kind: event_kind.to_string(),
+            tool: action.tool_name.clone(),
+            tool_input: None,
+            session_id: Some(session_id.to_string()),
+            turn_id: Some(turn_id.to_string()),
+            task_title: None,
+            summary: Some(action.requested_action.clone()),
+            timestamp: None,
+        };
+        self.handle_event(
+            Some(format!("Bearer {}", self.token).as_str()),
+            event,
+            now_ms,
+        )
+        .map_err(|_| "action_event_rejected".to_string())?;
+        let notification_id = format!("codex:{session_id}:{turn_id}");
+        if !self
+            .task_notifications
+            .attach_action(&notification_id, action)
+        {
+            let _ = self
+                .actions
+                .resolve(&id, TaskActionDecision::Fallback, now_ms);
+            return Err("notification_not_found".to_string());
+        }
+        self.save_task_notifications(now_ms);
+        let _ = kind;
+        Ok(ActionRegistration {
+            action_id: id,
+            expires_at_ms,
+        })
     }
 
     pub fn with_logger(mut self, logger: RotatingLog) -> Self {
@@ -572,6 +703,27 @@ impl RuntimeCore {
             self.active_agents.remove(&event.agent);
         }
     }
+}
+
+const ACTION_TTL_MS: u64 = 10 * 60 * 1_000;
+
+#[derive(Debug, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ActionHookRequest {
+    agent: String,
+    kind: String,
+    hook_input: serde_json::Value,
+}
+
+#[derive(Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ActionRegistration {
+    action_id: String,
+    expires_at_ms: u64,
+}
+
+fn json_text<'a>(value: &'a serde_json::Value, key: &str) -> Option<&'a str> {
+    value.get(key)?.as_str()
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -948,6 +1100,32 @@ fn handle_connection(
         }
     }
 
+    if let Ok(request) = parse_http_request(&buffer) {
+        if request.method == "GET" {
+            if let Some(id) = action_decision_id(&request.path) {
+                let (authorized, actions) = {
+                    let core = core.lock().expect("runtime core poisoned");
+                    (
+                        request.authorization.as_deref()
+                            == Some(format!("Bearer {}", core.token).as_str()),
+                        Arc::clone(&core.actions),
+                    )
+                };
+                let response = if !authorized {
+                    response(401, r#"{"error":"unauthorized"}"#)
+                } else {
+                    action_wait_response(actions.wait_decision(
+                        id,
+                        now_ms(),
+                        Duration::from_millis(ACTION_TTL_MS.saturating_sub(1_000)),
+                    ))
+                };
+                let _ = stream.write_all(&response.into_bytes());
+                return;
+            }
+        }
+    }
+
     let mut core = core.lock().expect("runtime core poisoned");
     let response = handle_http_request(&mut core, &buffer, now_ms());
     if response.status_code == 202 {
@@ -964,6 +1142,29 @@ fn handle_connection(
         on_state(update);
     }
     let _ = stream.write_all(&response.into_bytes());
+}
+
+fn action_decision_id(path: &str) -> Option<&str> {
+    path.strip_prefix("/v1/actions/")?
+        .strip_suffix("/decision")?
+        .split('/')
+        .next()
+        .filter(|id| !id.is_empty())
+}
+
+fn action_wait_response(decision: WaitDecision) -> HttpResponse {
+    match decision {
+        WaitDecision::Resolved(decision) => response_json(
+            200,
+            &serde_json::json!({ "state": "resolved", "decision": decision }),
+        ),
+        WaitDecision::Expired => response_json(
+            200,
+            &serde_json::json!({ "state": "expired", "decision": "fallback" }),
+        ),
+        WaitDecision::Stale => response(404, r#"{"error":"stale_action"}"#),
+        WaitDecision::Pending => response_json(202, &serde_json::json!({ "state": "pending" })),
+    }
 }
 
 fn request_is_complete(buffer: &[u8]) -> bool {

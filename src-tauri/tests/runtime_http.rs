@@ -6,6 +6,7 @@ use std::{
     io::{Read, Write},
     net::{TcpListener, TcpStream},
     sync::{Arc, Mutex},
+    thread,
     time::{Duration, Instant},
 };
 
@@ -142,13 +143,52 @@ fn runtime_manager_clears_completed_task_notifications() {
         .all(|item| item.status != TaskStatus::Completed));
 }
 
+#[test]
+fn waiting_for_action_decision_does_not_block_normal_event_ingestion() {
+    let temp = tempfile::tempdir().unwrap();
+    let runtime_dir = temp.path().join("runtime");
+    let manager = RuntimeManager::start(&runtime_dir, |_| {}).unwrap();
+    let token = fs::read_to_string(runtime_dir.join("event-token")).unwrap();
+    let body = r#"{"agent":"codex","kind":"permission.waiting","hookInput":{"session_id":"thread-1","turn_id":"turn-1","run_id_suffix":"approval-1","tool_name":"Bash","tool_input":{"command":"pnpm test"},"cwd":"/repo"}}"#;
+    let registered = request(manager.port(), &token, "POST", "/v1/actions", Some(body));
+    let response_body = registered.split("\r\n\r\n").nth(1).unwrap();
+    let action: serde_json::Value = serde_json::from_str(response_body).unwrap();
+    let action_id = action["actionId"].as_str().unwrap().to_string();
+    let port = manager.port();
+    let wait_token = token.clone();
+    let waiter = thread::spawn(move || {
+        request(
+            port,
+            &wait_token,
+            "GET",
+            &format!("/v1/actions/{action_id}/decision"),
+            None,
+        )
+    });
+
+    let accepted = post_runtime_event(
+        manager.port(),
+        &token,
+        r#"{"agent":"codex","kind":"tool.before","tool":"Read"}"#,
+    );
+    assert!(accepted.starts_with("HTTP/1.1 202 Accepted"));
+    manager.shutdown();
+    let decision = waiter.join().unwrap();
+    assert!(decision.contains("fallback"));
+}
+
 fn post_runtime_event(port: u16, token: &str, body: &str) -> String {
+    request(port, token, "POST", "/v1/events", Some(body))
+}
+
+fn request(port: u16, token: &str, method: &str, path: &str, body: Option<&str>) -> String {
     let mut stream = TcpStream::connect(("127.0.0.1", port)).unwrap();
     stream
         .set_read_timeout(Some(Duration::from_secs(2)))
         .unwrap();
+    let body = body.unwrap_or("");
     let request = format!(
-        "POST /v1/events HTTP/1.1\r\n\
+        "{method} {path} HTTP/1.1\r\n\
          Host: 127.0.0.1\r\n\
          Authorization: Bearer {token}\r\n\
          Content-Type: application/json\r\n\
