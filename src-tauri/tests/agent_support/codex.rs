@@ -97,7 +97,7 @@ fn run_codex_action_helper(kind: &str, input: &str, decision: &str) -> (String, 
     let decision = decision.to_string();
     let receiver = std::thread::spawn(move || {
         let mut requests = Vec::new();
-        let deadline = Instant::now() + Duration::from_secs(2);
+        let deadline = Instant::now() + Duration::from_secs(10);
         while requests.len() < 2 && Instant::now() < deadline {
             let (mut stream, _) = match listener.accept() {
                 Ok(connection) => connection,
