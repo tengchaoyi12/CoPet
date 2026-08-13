@@ -52,14 +52,17 @@ pub struct ActionRegistry {
 }
 
 impl ActionRegistry {
-    pub fn register(&self, kind: TaskActionKind, expires_at_ms: u64) -> String {
-        let mut bytes = [0_u8; 16];
-        let _ = getrandom::getrandom(&mut bytes);
-        let id: String = bytes.iter().map(|byte| format!("{byte:02x}")).collect();
-        self.entries
-            .lock()
-            .expect("action registry poisoned")
-            .insert(
+    pub fn register(&self, kind: TaskActionKind, expires_at_ms: u64) -> Result<String, String> {
+        let mut entries = self.entries.lock().expect("action registry poisoned");
+        for _ in 0..4 {
+            let mut bytes = [0_u8; 16];
+            getrandom::getrandom(&mut bytes)
+                .map_err(|_| "无法生成安全的任务操作标识".to_string())?;
+            let id: String = bytes.iter().map(|byte| format!("{byte:02x}")).collect();
+            if entries.contains_key(&id) {
+                continue;
+            }
+            entries.insert(
                 id.clone(),
                 ActionEntry {
                     kind,
@@ -67,7 +70,9 @@ impl ActionRegistry {
                     decision: None,
                 },
             );
-        id
+            return Ok(id);
+        }
+        Err("无法生成唯一的任务操作标识".to_string())
     }
 
     pub fn resolve(
@@ -80,7 +85,7 @@ impl ActionRegistry {
         let entry = entries
             .get_mut(id)
             .ok_or_else(|| "任务操作已失效".to_string())?;
-        if now_ms > entry.expires_at_ms {
+        if now_ms >= entry.expires_at_ms {
             entries.remove(id);
             return Err("任务操作已过期".to_string());
         }
@@ -106,7 +111,7 @@ impl ActionRegistry {
         let Some(entry) = entries.get(id) else {
             return WaitDecision::Stale;
         };
-        if now_ms > entry.expires_at_ms {
+        if now_ms >= entry.expires_at_ms {
             entries.remove(id);
             return WaitDecision::Expired;
         }
@@ -124,7 +129,7 @@ impl ActionRegistry {
             let Some(entry) = entries.get(id) else {
                 return WaitDecision::Stale;
             };
-            if now_ms > entry.expires_at_ms {
+            if now_ms >= entry.expires_at_ms {
                 entries.remove(id);
                 return WaitDecision::Expired;
             }
@@ -223,10 +228,19 @@ impl TaskAction {
         self.state = TaskActionState::Expired;
         self.quick_action_allowed = false;
     }
+
+    pub fn clear_permission_context(&mut self) {
+        if self.kind == TaskActionKind::Permission {
+            self.requested_action.clear();
+            self.tool_name = None;
+            self.command = None;
+            self.cwd = None;
+        }
+    }
 }
 
 pub fn allows_quick_continue(message: &str, stop_hook_active: bool) -> bool {
-    if stop_hook_active || !message.contains(CONTINUE_MARKER) {
+    if stop_hook_active || !message.trim_end().ends_with(CONTINUE_MARKER) {
         return false;
     }
 
@@ -258,15 +272,116 @@ pub fn allows_quick_continue(message: &str, stop_hook_active: bool) -> bool {
     !excluded.iter().any(|needle| normalized.contains(needle))
 }
 
-pub fn redact_command_for_display(command: &str) -> String {
-    let mut redacted = command.to_string();
-    for prefix in [
-        "Bearer ",
+pub fn allows_quick_permission(tool_name: &str, command: &str) -> bool {
+    let normalized_tool = tool_name.trim().to_ascii_lowercase();
+    if !matches!(
+        normalized_tool.as_str(),
+        "bash" | "shell" | "command" | "exec_command"
+    ) {
+        return false;
+    }
+
+    let normalized = command.to_ascii_lowercase();
+    let excluded = [
+        "rm -rf",
+        "rm -fr",
+        "sudo ",
+        "doas ",
+        "git push --force",
+        "git push -f",
+        "git reset --hard",
+        "drop database",
+        "drop table",
+        "truncate table",
+        "delete from",
+        "terraform destroy",
+        "kubectl delete",
+        "helm uninstall",
+        "npm publish",
+        "pnpm publish",
+        "cargo publish",
+        "gh release create",
+        "production",
+        "password",
+        "credential",
+        "authorization:",
         "bearer ",
         "api_key=",
         "api-key=",
         "token=",
+        "--token ",
+        ".ssh/",
+        ".aws/",
+        ".gnupg/",
+        "/.env",
+        "/etc/shadow",
+        "id_rsa",
+        "id_ed25519",
+        "keychain",
+        " archive",
+        "-exportarchive",
+    ];
+
+    if command.trim().is_empty()
+        || excluded.iter().any(|needle| normalized.contains(needle))
+        || ["&&", "||", ";", "\n", "`", "$(", ">", "<"]
+            .iter()
+            .any(|operator| command.contains(operator))
+    {
+        return false;
+    }
+
+    let words = command.split_whitespace().collect::<Vec<_>>();
+    let executable = words
+        .first()
+        .and_then(|value| value.rsplit('/').next())
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    let argument = words
+        .get(1)
+        .map(|value| value.to_ascii_lowercase())
+        .unwrap_or_default();
+    match executable.as_str() {
+        "pnpm" | "yarn" | "bun" => {
+            argument.starts_with("test")
+                || matches!(argument.as_str(), "build" | "lint" | "typecheck" | "check")
+                || (argument == "exec"
+                    && words.get(2).is_some_and(|value| *value == "playwright")
+                    && words.get(3).is_some_and(|value| *value == "test"))
+        }
+        "npm" => {
+            argument == "test"
+                || (argument == "run"
+                    && words.get(2).is_some_and(|value| {
+                        matches!(*value, "test" | "build" | "lint" | "typecheck" | "check")
+                    }))
+        }
+        "cargo" => matches!(
+            argument.as_str(),
+            "test" | "build" | "check" | "fmt" | "clippy"
+        ),
+        "git" => matches!(
+            argument.as_str(),
+            "status" | "diff" | "log" | "show" | "branch" | "rev-parse"
+        ),
+        "go" | "swift" => matches!(argument.as_str(), "test" | "build"),
+        "pytest" | "rg" | "grep" | "ls" | "pwd" | "sed" | "head" | "tail" | "cat" | "wc"
+        | "xcodebuild" => true,
+        _ => false,
+    }
+}
+
+pub fn redact_command_for_display(command: &str) -> String {
+    let mut redacted = command.to_string();
+    for prefix in [
+        "Bearer ",
+        "api_key=",
+        "api-key=",
+        "token=",
         "password=",
+        "--token ",
+        "--password ",
+        "--api-key ",
     ] {
         redacted = redact_value_after(&redacted, prefix);
     }
@@ -276,7 +391,7 @@ pub fn redact_command_for_display(command: &str) -> String {
 fn redact_value_after(input: &str, prefix: &str) -> String {
     let mut output = String::with_capacity(input.len());
     let mut remaining = input;
-    while let Some(index) = remaining.find(prefix) {
+    while let Some(index) = find_ascii_case_insensitive(remaining, prefix) {
         let value_start = index + prefix.len();
         output.push_str(&remaining[..value_start]);
         output.push_str("[已隐藏]");
@@ -290,4 +405,10 @@ fn redact_value_after(input: &str, prefix: &str) -> String {
     }
     output.push_str(remaining);
     output
+}
+
+fn find_ascii_case_insensitive(input: &str, needle: &str) -> Option<usize> {
+    input
+        .to_ascii_lowercase()
+        .find(&needle.to_ascii_lowercase())
 }

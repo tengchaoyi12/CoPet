@@ -312,7 +312,7 @@ fn restored_notification_does_not_restore_executable_action() {
         "codex:thread-1:turn-1",
         TaskAction::permission_once(
             "action-1",
-            "运行测试",
+            "敏感业务参数 secret-description",
             "Bash",
             Some("pnpm test"),
             Some("/repo"),
@@ -325,6 +325,41 @@ fn restored_notification_does_not_restore_executable_action() {
     let restored = TaskNotificationStore::load(&path, 300).unwrap();
     let action = restored.visible()[0].action.as_ref().unwrap();
 
+    assert_eq!(action.state, TaskActionState::Expired);
+    assert!(!action.quick_action_allowed);
+    assert!(action.command.is_none());
+    assert!(action.cwd.is_none());
+    assert!(action.tool_name.is_none());
+    assert!(!fs::read_to_string(&path).unwrap().contains("pnpm test"));
+    assert!(!fs::read_to_string(&path).unwrap().contains("/repo"));
+    assert!(!fs::read_to_string(&path)
+        .unwrap()
+        .contains("secret-description"));
+}
+
+#[test]
+fn expiring_pending_actions_removes_all_quick_approval_context() {
+    let mut store = TaskNotificationStore::default();
+    store.apply(
+        event("permission.waiting", Some("thread-1"), Some("turn-1"), None),
+        100,
+    );
+    store.attach_action(
+        "codex:thread-1:turn-1",
+        TaskAction::permission_once(
+            "action-1",
+            "包含业务参数的命令",
+            "Bash",
+            Some("pnpm test"),
+            Some("/repo"),
+            200,
+            true,
+        ),
+    );
+
+    assert_eq!(store.expire_actions(199), 0);
+    assert_eq!(store.expire_actions(200), 1);
+    let action = store.visible()[0].action.as_ref().unwrap();
     assert_eq!(action.state, TaskActionState::Expired);
     assert!(!action.quick_action_allowed);
 }

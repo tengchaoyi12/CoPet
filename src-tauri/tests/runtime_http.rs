@@ -177,6 +177,24 @@ fn waiting_for_action_decision_does_not_block_normal_event_ingestion() {
     assert!(decision.contains("fallback"));
 }
 
+#[test]
+fn action_decision_route_rejects_extra_path_segments() {
+    let temp = tempfile::tempdir().unwrap();
+    let runtime_dir = temp.path().join("runtime");
+    let manager = RuntimeManager::start(&runtime_dir, |_| {}).unwrap();
+    let token = fs::read_to_string(runtime_dir.join("event-token")).unwrap();
+
+    let response = request(
+        manager.port(),
+        &token,
+        "GET",
+        "/v1/actions/action-1/extra/decision",
+        None,
+    );
+
+    assert!(response.starts_with("HTTP/1.1 404 Not Found"));
+}
+
 fn post_runtime_event(port: u16, token: &str, body: &str) -> String {
     request(port, token, "POST", "/v1/events", Some(body))
 }

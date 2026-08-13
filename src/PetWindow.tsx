@@ -337,6 +337,7 @@ export function PetWindow() {
         >
           {displayedTaskNotifications.length > 0 ? (
             <TaskNotifications
+              actionNowMs={taskNotifications.actionNowMs}
               busyActionIds={taskNotifications.busyActionIds}
               notifications={displayedTaskNotifications}
               onAllowOnce={(actionId) =>

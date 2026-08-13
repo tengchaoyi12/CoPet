@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 
 import {
@@ -17,6 +17,23 @@ export function useTaskNotifications() {
   const [busyActionIds, setBusyActionIds] = useState<Set<string>>(
     () => new Set(),
   );
+  const [actionNowMs, setActionNowMs] = useState(() => Date.now());
+
+  useEffect(() => {
+    const nextExpiry = notifications.reduce<number | null>((earliest, notification) => {
+      const action = notification.action;
+      if (!action || action.state !== "pending" || action.expiresAtMs <= actionNowMs) {
+        return earliest;
+      }
+      return earliest === null ? action.expiresAtMs : Math.min(earliest, action.expiresAtMs);
+    }, null);
+    if (nextExpiry === null) return;
+    const timer = window.setTimeout(
+      () => setActionNowMs(Date.now()),
+      Math.max(0, nextExpiry - Date.now() + 1),
+    );
+    return () => window.clearTimeout(timer);
+  }, [actionNowMs, notifications]);
 
   const runAction = useCallback(
     async (id: string, decision: TaskActionDecision) => {
@@ -39,6 +56,7 @@ export function useTaskNotifications() {
   return useMemo(
     () => ({
       notifications: visible ? notifications : [],
+      actionNowMs,
       busyActionIds,
       open: async (id: string) => {
         const result = await openTaskNotification(id);
@@ -57,6 +75,6 @@ export function useTaskNotifications() {
         if (opened.errorMessage) toast.error(opened.errorMessage);
       },
     }),
-    [busyActionIds, notifications, runAction, visible],
+    [actionNowMs, busyActionIds, notifications, runAction, visible],
   );
 }

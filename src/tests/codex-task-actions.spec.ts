@@ -176,6 +176,79 @@ test("在 Codex 中处理先 fallback 再打开对应任务", async ({ browser }
   ]);
 });
 
+test("点击 pending 卡片正文也先 fallback 再打开任务", async ({ browser }) => {
+  const taskAction = action("action-card-open", "continue");
+  const harness = await createAppHarness(browser, {
+    runtimeStatus: runtimeWith([notification("task-card-open", taskAction)]),
+    state: zhState,
+  });
+  const page = await harness.openPage("pet");
+
+  await page.getByTestId("task-notification").click();
+
+  await expect
+    .poll(
+      () =>
+        harness.calls.filter((call) =>
+          ["resolve_task_action", "open_task_notification"].includes(call.command),
+        ).length,
+    )
+    .toBe(2);
+  expect(
+    harness.calls.filter((call) =>
+      ["resolve_task_action", "open_task_notification"].includes(call.command),
+    ),
+  ).toEqual([
+    {
+      command: "resolve_task_action",
+      args: { id: "action-card-open", decision: "fallback" },
+    },
+    {
+      command: "open_task_notification",
+      args: { id: "task-card-open" },
+    },
+  ]);
+});
+
+test("键盘关闭 pending 卡片不会触发打开任务", async ({ browser }) => {
+  const taskAction = action("action-keyboard-close", "permission");
+  const harness = await createAppHarness(browser, {
+    runtimeStatus: runtimeWith([notification("task-keyboard-close", taskAction)]),
+    state: zhState,
+  });
+  const page = await harness.openPage("pet");
+
+  await page.getByRole("button", { name: "关闭", exact: true }).focus();
+  await page.keyboard.press("Enter");
+
+  await expect(page.getByTestId("task-notification")).toHaveCount(0);
+  expect(harness.calls).toContainEqual({
+    command: "dismiss_task_notification",
+    args: { id: "task-keyboard-close" },
+  });
+  expect(harness.calls.some((call) => call.command === "open_task_notification")).toBe(
+    false,
+  );
+});
+
+test("pending 动作达到 expiresAtMs 后自动隐藏批准按钮", async ({ browser }) => {
+  const taskAction = action("action-live-expiry", "continue", {
+    expiresAtMs: Date.now() + 300,
+  });
+  const harness = await createAppHarness(browser, {
+    runtimeStatus: runtimeWith([notification("task-live-expiry", taskAction)]),
+    state: zhState,
+  });
+  const page = await harness.openPage("pet");
+  const continueButton = page.getByRole("button", {
+    name: "继续执行",
+    exact: true,
+  });
+
+  await expect(continueButton).toBeVisible();
+  await expect(continueButton).toHaveCount(0, { timeout: 2_000 });
+});
+
 test("不安全、过期和需要抉择的动作不显示快捷批准", async ({ browser }) => {
   const unsafe = notification(
     "task-unsafe",

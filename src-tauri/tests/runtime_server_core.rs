@@ -833,6 +833,40 @@ fn authenticated_action_request_returns_unique_action_id() {
 }
 
 #[test]
+fn high_risk_permission_payload_never_enables_quick_approval() {
+    let mut core = RuntimeCore::new("secret".to_string());
+    let body = r#"{"agent":"codex","kind":"permission.waiting","hookInput":{"session_id":"thread-1","turn_id":"turn-1","run_id_suffix":"approval-1","tool_name":"Bash","tool_input":{"command":"rm -rf build","description":"清理构建目录"},"cwd":"/repo"}}"#;
+
+    register_action(&mut core, body, 100);
+
+    let status = core.status();
+    let action = status.notifications[0].action.as_ref().unwrap();
+    assert!(!action.quick_action_allowed);
+}
+
+#[test]
+fn replacement_action_immediately_falls_back_the_previous_hook() {
+    let actions = Arc::new(ActionRegistry::default());
+    let mut core = RuntimeCore::new_with_actions("secret".to_string(), Arc::clone(&actions));
+    let first_body = r#"{"agent":"codex","kind":"permission.waiting","hookInput":{"session_id":"thread-1","turn_id":"turn-1","run_id_suffix":"approval-1","tool_name":"Bash","tool_input":{"command":"pnpm test"},"cwd":"/repo"}}"#;
+    let second_body = r#"{"agent":"codex","kind":"permission.waiting","hookInput":{"session_id":"thread-1","turn_id":"turn-1","run_id_suffix":"approval-2","tool_name":"Bash","tool_input":{"command":"pnpm build"},"cwd":"/repo"}}"#;
+    let first = register_action(&mut core, first_body, 100);
+
+    let second = register_action(&mut core, second_body, 200);
+
+    assert_ne!(first, second);
+    assert_eq!(
+        actions.take_decision(&first, 200),
+        WaitDecision::Resolved(TaskActionDecision::Fallback)
+    );
+    assert_eq!(actions.take_decision(&second, 200), WaitDecision::Pending);
+    assert_eq!(
+        core.status().notifications[0].action.as_ref().unwrap().id,
+        second
+    );
+}
+
+#[test]
 fn continue_once_resolves_only_target_and_moves_it_to_running() {
     let actions = Arc::new(ActionRegistry::default());
     let mut core = RuntimeCore::new_with_actions("secret".to_string(), Arc::clone(&actions));
@@ -888,6 +922,57 @@ fn fallback_expires_action_but_keeps_notification_openable() {
 }
 
 #[test]
+fn stale_fallback_is_idempotent_and_keeps_notification_openable() {
+    let actions = Arc::new(ActionRegistry::default());
+    let mut core = RuntimeCore::new_with_actions("secret".to_string(), Arc::clone(&actions));
+    let body = r#"{"agent":"codex","kind":"permission.waiting","hookInput":{"session_id":"thread-1","turn_id":"turn-1","run_id_suffix":"approval-1","tool_name":"Bash","tool_input":{"command":"pnpm test"},"cwd":"/repo"}}"#;
+    let id = register_action(&mut core, body, 100);
+    assert_eq!(actions.take_decision(&id, 600_100), WaitDecision::Expired);
+
+    let update = core
+        .resolve_task_action(&id, TaskActionDecision::Fallback, 600_100)
+        .unwrap();
+
+    assert_eq!(
+        update.notifications[0].action.as_ref().unwrap().state,
+        copet_lib::task_actions::TaskActionState::Expired
+    );
+}
+
+#[test]
+fn advancing_time_expires_notification_action() {
+    let mut core = RuntimeCore::new("secret".to_string());
+    let body = r#"{"agent":"codex","kind":"permission.waiting","hookInput":{"session_id":"thread-1","turn_id":"turn-1","run_id_suffix":"approval-1","tool_name":"Bash","tool_input":{"command":"pnpm test"},"cwd":"/repo"}}"#;
+    register_action(&mut core, body, 100);
+
+    core.advance_time(600_100);
+
+    let status = core.status();
+    let action = status.notifications[0].action.as_ref().unwrap();
+    assert_eq!(
+        action.state,
+        copet_lib::task_actions::TaskActionState::Expired
+    );
+    assert!(!action.quick_action_allowed);
+}
+
+#[test]
+fn opening_pending_action_falls_back_before_opening_codex() {
+    let actions = Arc::new(ActionRegistry::default());
+    let mut core = RuntimeCore::new_with_actions("secret".to_string(), Arc::clone(&actions));
+    let body = r#"{"agent":"codex","kind":"permission.waiting","hookInput":{"session_id":"thread-1","turn_id":"turn-1","run_id_suffix":"approval-1","tool_name":"Bash","tool_input":{"command":"pnpm test"},"cwd":"/repo"}}"#;
+    let id = register_action(&mut core, body, 100);
+
+    core.open_task_notification_with_at("codex:thread-1:turn-1", 200, |_| Ok(()))
+        .unwrap();
+
+    assert_eq!(
+        actions.take_decision(&id, 200),
+        WaitDecision::Resolved(TaskActionDecision::Fallback)
+    );
+}
+
+#[test]
 fn dismiss_pending_action_falls_back_before_removing_notification() {
     let actions = Arc::new(ActionRegistry::default());
     let mut core = RuntimeCore::new_with_actions("secret".to_string(), Arc::clone(&actions));
@@ -903,6 +988,21 @@ fn dismiss_pending_action_falls_back_before_removing_notification() {
         actions.take_decision(&id, 200),
         WaitDecision::Resolved(TaskActionDecision::Fallback)
     );
+}
+
+#[test]
+fn dismissing_after_registry_timeout_still_removes_notification() {
+    let actions = Arc::new(ActionRegistry::default());
+    let mut core = RuntimeCore::new_with_actions("secret".to_string(), Arc::clone(&actions));
+    let body = r#"{"agent":"codex","kind":"permission.waiting","hookInput":{"session_id":"thread-1","turn_id":"turn-1","run_id_suffix":"approval-1","tool_name":"Bash","tool_input":{"command":"pnpm test"},"cwd":"/repo"}}"#;
+    let id = register_action(&mut core, body, 100);
+    assert_eq!(actions.take_decision(&id, 600_100), WaitDecision::Expired);
+
+    let update = core
+        .dismiss_task_notification_at("codex:thread-1:turn-1", 600_100)
+        .unwrap();
+
+    assert!(update.notifications.is_empty());
 }
 
 #[test]

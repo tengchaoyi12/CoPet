@@ -237,6 +237,20 @@ impl TaskNotificationStore {
             .map(|action| action.id.as_str())
     }
 
+    pub fn expire_actions(&mut self, now_ms: u64) -> usize {
+        let mut changed = 0;
+        for task in self.notifications.values_mut() {
+            let Some(action) = task.action.as_mut() else {
+                continue;
+            };
+            if action.state == TaskActionState::Pending && now_ms >= action.expires_at_ms {
+                action.expire();
+                changed += 1;
+            }
+        }
+        changed
+    }
+
     pub fn validate_action(
         &self,
         action_id: &str,
@@ -307,6 +321,10 @@ impl TaskNotificationStore {
         for task in self.notifications.values_mut() {
             if let Some(action) = task.action.as_mut() {
                 action.expire();
+                if action.kind == TaskActionKind::Permission {
+                    task.summary = None;
+                }
+                action.clear_permission_context();
             }
         }
         let mut retained = self

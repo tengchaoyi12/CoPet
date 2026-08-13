@@ -6,6 +6,7 @@ import { createTranslator } from "../lib/i18n";
 import { useLocale } from "../hooks/useAppStore";
 
 export function TaskNotifications({
+  actionNowMs,
   busyActionIds,
   notifications,
   onAllowOnce,
@@ -14,6 +15,7 @@ export function TaskNotifications({
   onFallbackAndOpen,
   onOpen,
 }: {
+  actionNowMs: number;
   busyActionIds: ReadonlySet<string>;
   notifications: TaskNotification[];
   onAllowOnce: (actionId: string) => void;
@@ -29,7 +31,9 @@ export function TaskNotifications({
       {notifications.map((notification) => {
         const iconUrl = agentIconUrl(notification.agent);
         const action = notification.action;
-        const actionPending = action?.state === "pending";
+        const actionPending = Boolean(
+          action?.state === "pending" && action.expiresAtMs > actionNowMs,
+        );
         const actionBusy = action ? busyActionIds.has(action.id) : false;
         const showQuickAction = Boolean(
           actionPending && action?.quickActionAllowed,
@@ -40,11 +44,24 @@ export function TaskNotifications({
             data-status={notification.status}
             data-testid="task-notification"
             key={notification.id}
-            onClick={() => onOpen(notification.id)}
-            onKeyDown={(event) => {
-              if (event.key === "Enter" || event.key === " ") {
-                event.preventDefault();
+            onClick={() => {
+              if (action && actionPending) {
+                onFallbackAndOpen(notification.id, action.id);
+              } else {
                 onOpen(notification.id);
+              }
+            }}
+            onKeyDown={(event) => {
+              if (
+                event.target === event.currentTarget &&
+                (event.key === "Enter" || event.key === " ")
+              ) {
+                event.preventDefault();
+                if (action && actionPending) {
+                  onFallbackAndOpen(notification.id, action.id);
+                } else {
+                  onOpen(notification.id);
+                }
               }
             }}
             role="button"
@@ -72,6 +89,15 @@ export function TaskNotifications({
                   title={notification.summary}
                 >
                   {notification.summary}
+                </span>
+              ) : null}
+              {action?.requestedAction &&
+              action.requestedAction !== notification.summary ? (
+                <span
+                  className="pet-task-notification-summary"
+                  title={action.requestedAction}
+                >
+                  {action.requestedAction}
                 </span>
               ) : null}
               {action?.kind === "permission" ? (
@@ -140,6 +166,7 @@ export function TaskNotifications({
                 event.stopPropagation();
                 onDismiss(notification.id);
               }}
+              onKeyDown={(event) => event.stopPropagation()}
               type="button"
             >
               <X aria-hidden="true" />

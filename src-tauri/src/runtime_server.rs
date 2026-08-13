@@ -19,8 +19,8 @@ use crate::{
         DerivedPetState, EventStateEngine, RuntimeEvent, TokenBucket,
     },
     task_actions::{
-        allows_quick_continue, ActionRegistry, TaskAction, TaskActionDecision, TaskActionKind,
-        WaitDecision,
+        allows_quick_continue, allows_quick_permission, ActionRegistry, TaskAction,
+        TaskActionDecision, TaskActionKind, WaitDecision,
     },
     task_notifications::{TaskAttention, TaskNotification, TaskNotificationStore},
     task_opener,
@@ -189,10 +189,11 @@ impl RuntimeManager {
                 }
                 thread::sleep(Duration::from_millis(100));
                 let mut core = tick_core.lock().expect("runtime core poisoned");
-                let previous = core.status().current_state;
+                let previous = core.status();
                 let next = core.advance_time(now_ms());
-                if next != previous {
-                    let status = core.status();
+                let status = core.status();
+                if next != previous.current_state || status.notifications != previous.notifications
+                {
                     tick_on_state(RuntimeUpdate {
                         current_state: next,
                         messages: status.messages,
@@ -354,7 +355,12 @@ impl RuntimeCore {
             .or_else(|| json_text(&request.hook_input, "turnId"))
             .ok_or_else(|| "missing_turn_id".to_string())?;
         let expires_at_ms = now_ms.saturating_add(ACTION_TTL_MS);
-        let (kind, action, event_kind) = match request.kind.as_str() {
+        let notification_id = format!("codex:{session_id}:{turn_id}");
+        let previous_action_id = self
+            .task_notifications
+            .pending_action_id(&notification_id)
+            .map(str::to_string);
+        let (action, event_kind) = match request.kind.as_str() {
             "permission.waiting" => {
                 let tool_name = json_text(&request.hook_input, "tool_name")
                     .or_else(|| json_text(&request.hook_input, "toolName"))
@@ -368,10 +374,11 @@ impl RuntimeCore {
                     .and_then(|value| json_text(value, "description"))
                     .unwrap_or("执行当前工具操作");
                 let cwd = json_text(&request.hook_input, "cwd");
-                let quick_allowed = tool_name != "unknown" && command.is_some();
+                let quick_allowed =
+                    command.is_some_and(|command| allows_quick_permission(tool_name, command));
                 let id = self
                     .actions
-                    .register(TaskActionKind::Permission, expires_at_ms);
+                    .register(TaskActionKind::Permission, expires_at_ms)?;
                 let action = TaskAction::permission_once(
                     &id,
                     description,
@@ -381,7 +388,7 @@ impl RuntimeCore {
                     expires_at_ms,
                     quick_allowed,
                 );
-                (TaskActionKind::Permission, action, "permission.waiting")
+                (action, "permission.waiting")
             }
             "session.stop" => {
                 let message = json_text(&request.hook_input, "last_assistant_message")
@@ -398,9 +405,9 @@ impl RuntimeCore {
                 }
                 let id = self
                     .actions
-                    .register(TaskActionKind::Continue, expires_at_ms);
+                    .register(TaskActionKind::Continue, expires_at_ms)?;
                 let action = TaskAction::continue_once(&id, "继续完成当前任务", expires_at_ms);
-                (TaskActionKind::Continue, action, "session.waiting")
+                (action, "session.waiting")
             }
             _ => return Err("unsupported_action_kind".to_string()),
         };
@@ -413,16 +420,29 @@ impl RuntimeCore {
             session_id: Some(session_id.to_string()),
             turn_id: Some(turn_id.to_string()),
             task_title: None,
-            summary: Some(action.requested_action.clone()),
+            summary: Some(
+                if action.kind == TaskActionKind::Permission {
+                    "需要批准当前工具操作"
+                } else {
+                    "继续完成当前任务"
+                }
+                .to_string(),
+            ),
             timestamp: None,
         };
-        self.handle_event(
-            Some(format!("Bearer {}", self.token).as_str()),
-            event,
-            now_ms,
-        )
-        .map_err(|_| "action_event_rejected".to_string())?;
-        let notification_id = format!("codex:{session_id}:{turn_id}");
+        if self
+            .handle_event(
+                Some(format!("Bearer {}", self.token).as_str()),
+                event,
+                now_ms,
+            )
+            .is_err()
+        {
+            let _ = self
+                .actions
+                .resolve(&id, TaskActionDecision::Fallback, now_ms);
+            return Err("action_event_rejected".to_string());
+        }
         if !self
             .task_notifications
             .attach_action(&notification_id, action)
@@ -432,8 +452,12 @@ impl RuntimeCore {
                 .resolve(&id, TaskActionDecision::Fallback, now_ms);
             return Err("notification_not_found".to_string());
         }
+        if let Some(previous_action_id) = previous_action_id {
+            let _ = self
+                .actions
+                .resolve(&previous_action_id, TaskActionDecision::Fallback, now_ms);
+        }
         self.save_task_notifications(now_ms);
-        let _ = kind;
         Ok(ActionRegistration {
             action_id: id,
             expires_at_ms,
@@ -606,6 +630,27 @@ impl RuntimeCore {
         id: &str,
         open: impl FnOnce(Option<&str>) -> Result<(), String>,
     ) -> Result<RuntimeUpdate, String> {
+        self.open_task_notification_with_at(id, now_ms(), open)
+    }
+
+    pub fn open_task_notification_with_at(
+        &mut self,
+        id: &str,
+        current_time: u64,
+        open: impl FnOnce(Option<&str>) -> Result<(), String>,
+    ) -> Result<RuntimeUpdate, String> {
+        if let Some(action_id) = self
+            .task_notifications
+            .pending_action_id(id)
+            .map(str::to_string)
+        {
+            let _ = self
+                .actions
+                .resolve(&action_id, TaskActionDecision::Fallback, current_time);
+            self.task_notifications
+                .transition_action(&action_id, TaskActionDecision::Fallback)?;
+            self.save_task_notifications(current_time);
+        }
         let session_id = self
             .task_notifications
             .get(id)
@@ -625,7 +670,10 @@ impl RuntimeCore {
         now_ms: u64,
     ) -> Result<RuntimeUpdate, String> {
         self.task_notifications.validate_action(id, decision)?;
-        self.actions.resolve(id, decision, now_ms)?;
+        let registry_result = self.actions.resolve(id, decision, now_ms);
+        if decision != TaskActionDecision::Fallback {
+            registry_result?;
+        }
         self.task_notifications.transition_action(id, decision)?;
         self.save_task_notifications(now_ms);
         self.latest_attention = None;
@@ -646,8 +694,9 @@ impl RuntimeCore {
             .pending_action_id(id)
             .map(str::to_string)
         {
-            self.actions
-                .resolve(&action_id, TaskActionDecision::Fallback, now_ms)?;
+            let _ = self
+                .actions
+                .resolve(&action_id, TaskActionDecision::Fallback, now_ms);
         }
         if !self.task_notifications.dismiss(id) {
             return Err("任务提醒不存在".to_string());
@@ -659,6 +708,9 @@ impl RuntimeCore {
 
     pub fn advance_time(&mut self, now_ms: u64) -> DerivedPetState {
         self.engine.advance_time(now_ms);
+        if self.task_notifications.expire_actions(now_ms) > 0 {
+            self.save_task_notifications(now_ms);
+        }
         self.current_state()
     }
 
@@ -1176,7 +1228,13 @@ fn handle_connection(
             serde_json::json!({
                 "currentState": &update.current_state,
                 "messages": &update.messages,
-                "notifications": &update.notifications,
+                "notificationCount": update.notifications.len(),
+                "notificationStates": update.notifications.iter().map(|notification| serde_json::json!({
+                    "id": notification.id,
+                    "status": notification.status,
+                    "actionKind": notification.action.as_ref().map(|action| action.kind),
+                    "actionState": notification.action.as_ref().map(|action| action.state),
+                })).collect::<Vec<_>>(),
                 "attention": &update.attention,
             }),
         );
@@ -1186,11 +1244,10 @@ fn handle_connection(
 }
 
 fn action_decision_id(path: &str) -> Option<&str> {
-    path.strip_prefix("/v1/actions/")?
-        .strip_suffix("/decision")?
-        .split('/')
-        .next()
-        .filter(|id| !id.is_empty())
+    let id = path
+        .strip_prefix("/v1/actions/")?
+        .strip_suffix("/decision")?;
+    (!id.is_empty() && !id.contains('/')).then_some(id)
 }
 
 fn action_wait_response(decision: WaitDecision) -> HttpResponse {

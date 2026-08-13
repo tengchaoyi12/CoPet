@@ -107,7 +107,7 @@ $skill-installer install all CoPet skills from https://github.com/ChanceYu/CoPet
 
 ## Codex 任务提醒
 
-CoPet 首版只在设置页暴露 Codex 集成，配置路径为 `~/.codex/hooks.json` 和 `~/.codex/config.toml`。任务只需要无歧义地继续时，提醒会显示“继续执行”；工具权限请求会展示脱敏后的命令与工作目录，并提供只对当前请求生效的“允许并继续”。需要 A/B 选择或输入回复的提示绝不显示快捷批准按钮，应使用“在 Codex 中处理”。待处理动作十分钟后过期；超时、退出、断连、关闭提醒或打开 Codex 都只会回退到 Codex 原生处理，绝不自动批准。短按宠物可直接打开 Codex。在 macOS 上，Codex 成为前台后会清除全部完成提醒，但保留等待和失败提醒。
+CoPet 首版只在设置页暴露 Codex 集成，配置路径为 `~/.codex/hooks.json` 和 `~/.codex/config.toml`。任务只需要无歧义地继续时，提醒会显示“继续执行”；白名单内的本地测试、构建或只读工具权限会展示脱敏后的命令与工作目录，并提供只对当前请求生效的“允许并继续”。未知工具、shell 命令链、破坏性或生产操作，以及需要 A/B 选择或输入回复的提示都绝不显示快捷批准按钮，应使用“在 Codex 中处理”。待处理动作十分钟后过期；超时、退出、断连、关闭提醒或打开 Codex 都只会回退到 Codex 原生处理，绝不自动批准。短按宠物可直接打开 Codex。在 macOS 上，Codex 成为前台后会清除全部完成提醒，但保留等待和失败提醒。
 
 详细行为、排障和验收步骤见 [Codex 任务提醒说明](./docs/codex-task-reminders.md)。
 
