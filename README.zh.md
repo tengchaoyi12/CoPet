@@ -49,6 +49,7 @@
 - 宠物固定显示静态帧，可拖拽调整位置；短按宠物会打开 Codex，拖拽不会误打开。
 - 首版专注支持 Codex，并在首次启动时自动安装可用的 Codex Hook。
 - Codex 任务完成或等待操作时显示独立提醒；点击提醒可返回对应任务。
+- 无歧义的继续提示和工具权限请求可在提醒中直接处理；权限始终只批准当前一次请求。
 - 在 macOS 上，Codex 成为前台应用后会自动清除全部完成提醒，同时保留等待和失败提醒。
 - 自带多款宠物，也可以导入兼容 Codex 的宠物包。
 - 支持长按和原生右键菜单。
@@ -106,7 +107,7 @@ $skill-installer install all CoPet skills from https://github.com/ChanceYu/CoPet
 
 ## Codex 任务提醒
 
-CoPet 首版只在设置页暴露 Codex 集成，配置路径为 `~/.codex/hooks.json` 和 `~/.codex/config.toml`。任务结束后宠物会显示“任务完成啦，快去看看吧。”；短按宠物可直接打开 Codex。在 macOS 上，Codex 成为前台后会清除全部完成提醒，但保留等待和失败提醒。
+CoPet 首版只在设置页暴露 Codex 集成，配置路径为 `~/.codex/hooks.json` 和 `~/.codex/config.toml`。任务只需要无歧义地继续时，提醒会显示“继续执行”；工具权限请求会展示脱敏后的命令与工作目录，并提供只对当前请求生效的“允许并继续”。需要 A/B 选择或输入回复的提示绝不显示快捷批准按钮，应使用“在 Codex 中处理”。待处理动作十分钟后过期；超时、退出、断连、关闭提醒或打开 Codex 都只会回退到 Codex 原生处理，绝不自动批准。短按宠物可直接打开 Codex。在 macOS 上，Codex 成为前台后会清除全部完成提醒，但保留等待和失败提醒。
 
 详细行为、排障和验收步骤见 [Codex 任务提醒说明](./docs/codex-task-reminders.md)。
 

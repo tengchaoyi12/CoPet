@@ -49,6 +49,7 @@ Built with Tauri, Rust, and React. Lightweight, local-first, no cloud.
 - The pet stays on a static frame, remains draggable, and opens Codex on a short press without misfiring during a drag.
 - The first release focuses on Codex and automatically installs its hook when Codex is available.
 - Separate actionable reminders appear when Codex tasks complete or need input.
+- Unambiguous continuation prompts and tool permission requests can be handled inline. Permission approval always applies to the current request only.
 - On macOS, bringing Codex to the foreground clears all completed reminders while preserving waiting and failed reminders.
 - Built-in pets plus import support for Codex-compatible pet packages.
 - Long-press and native context-menu controls remain available.
@@ -106,7 +107,7 @@ Restart Codex if the newly installed Skills do not appear.
 
 ## Codex task reminders
 
-The first release exposes only the Codex integration. Its hook configuration lives in `~/.codex/hooks.json` and `~/.codex/config.toml`. Short-press the pet to open Codex. On macOS, activating Codex clears completed reminders while keeping waiting and failed reminders.
+The first release exposes only the Codex integration. Its hook configuration lives in `~/.codex/hooks.json` and `~/.codex/config.toml`. Short-press the pet to open Codex. When a task only needs an unambiguous continuation, the reminder offers **Continue**; a tool permission request shows the redacted command and working directory and offers **Allow and continue** for that request only. Prompts that require a choice or typed answer never expose a quick approval button—use **Handle in Codex** instead. Pending actions expire after ten minutes, and timeout, shutdown, disconnect, dismissal, or opening Codex always falls back to native Codex handling without approving anything. On macOS, activating Codex clears completed reminders while keeping waiting and failed reminders.
 
 See [Codex task reminders](./docs/codex-task-reminders.md) for behavior, troubleshooting, and acceptance steps.
 

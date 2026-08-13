@@ -9,7 +9,7 @@ CoPet 是一个 local-first 的桌面宠物客户端，面向 AI Agent CLI 工�
 ## 设计原则
 
 - **默认本地优先** — runtime 状态、用户包、生成的 hooks、偏好设置都在用户机器上；CoPet 不依赖云服务观察 Agent 活动。
-- **Agent 会话不能被 CoPet 阻塞** — hooks 是短生命周期调用，快速超时；CoPet 未运行时静默退出。
+- **CoPet 不可用时 Agent 会话必须安全降级** — 普通事件 hooks 保持短生命周期并静默失败；显式快捷操作 hook 最多等待用户十分钟，但超时、退出和断连都只会回退，绝不批准。
 - **在边界处归一化** — 不同 Agent 的 hook 名称和 payload 形态不同，但应用内部只看一组小型共享事件词表。
 - **资源包优先于硬编码资产** — 内置宠物和音效也使用与用户资产一致的包模型；应用扫描包，而不是在 UI 中写死资产列表。
 - **Skill 是一等生成入口** — 宠物和音效生成通过 CoPet Skills 描述，让 Agent 可以生成资产并安装到应用运行目录。
@@ -20,9 +20,12 @@ CoPet 是一个 local-first 的桌面宠物客户端，面向 AI Agent CLI 工�
 
 ```text
 Agent CLI hooks
-  └─ 短生命周期 shell/plugin 调用
-      └─ localhost event endpoint
+  ├─ 短生命周期事件调用
+  │   └─ localhost event endpoint
+  └─ 有时限的快捷操作调用
+      └─ localhost action + decision endpoints
           └─ Rust runtime core
+              ├─ 一次性 action registry
               ├─ Agent adapter manager
               ├─ 事件归一化与宠物状态派生
               ├─ 配置、宠物包、音效包扫描
@@ -38,7 +41,15 @@ CoPet 把 Agent 活动看成一条小型事件流：提交提示、工具开始�
 
 Rust Core 负责状态派生。它把事件映射成 thinking、editing、inspecting、waiting、celebrating、failed 等稳定 UI 概念。前端再把这些 Agent 派生状态与本地互动状态组合起来，例如悬停、点击、长按、拖拽和 idle 行为。
 
-这个分离让 hook 代码保持很小且可替换。Hooks 只报告事实；应用决定这些事实如何表现。
+这个分离让 hook 代码保持很小且可替换。Hooks 通常只报告事实；应用决定这些事实如何表现。
+
+## Codex 快捷操作
+
+Codex 快捷操作是一条刻意收窄的双向边界。`PermissionRequest` 与带显式标记、没有歧义的 `Stop` 事件会注册一个不透明 action id，然后在独立 decision endpoint 上最多等待十分钟。UI 只能把这个精确 id 解析为 `allowOnce`、`continueOnce` 或 `fallback`；registry 会一次性消费决定，因此重试和并行任务都不能批准其他动作。
+
+权限卡片只展示适合显示的命令上下文，绝不提供永久或会话级批准。要求选择、输入、永久授权、破坏性确认或敏感凭证的 Stop 消息不具备快捷继续资格。关闭卡片、选择“在 Codex 中处理”、动作过期、runtime 退出和连接丢失都会解析为或等同于 `fallback`。Fallback 保留 Codex 原生处理，绝不会输出批准决定。
+
+普通生命周期事件继续使用原有的快速静默降级行为。只有两种显式快捷操作 hook 会等待响应，避免双向路径改变普通遥测的延迟契约。
 
 ## Agent 集成
 
@@ -77,7 +88,7 @@ Rust Core 负责状态派生。它把事件映射成 thinking、editing、inspec
 
 Rust 负责 OS 集成、持久化、Agent hook 改写、runtime 事件处理、包扫描和原生窗口行为。React 负责互动体验、设置流程、动画组合和用户反馈。
 
-跨边界通信保持窄接口：请求走 typed Tauri commands，状态变化走 Tauri events，资产走 package manifests。这让每层都更容易测试，因为每个边界都有小而稳定的契约。
+跨边界通信保持窄接口：请求走 typed Tauri commands，状态变化走 Tauri events，hook 事件与一次性动作决定走经过认证的 localhost endpoints，资产走 package manifests。这让每层都更容易测试，因为每个边界都有小而稳定的契约。
 
 ## 质量策略
 

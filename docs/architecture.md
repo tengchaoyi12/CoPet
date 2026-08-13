@@ -9,7 +9,7 @@ The architecture is intentionally modular. Agent integrations, pet packages, sou
 ## Design Principles
 
 - **Local-first by default** — runtime state, user packages, generated hooks, and preferences live on the user's machine. CoPet does not need a cloud service to observe Agent activity.
-- **Agent sessions must never block on CoPet** — hooks are short-lived, timeout quickly, and fail silently when CoPet is not running.
+- **Agent sessions fail safe when CoPet is unavailable** — ordinary event hooks remain short-lived and fail silently. Explicit quick-action hooks may wait up to ten minutes for the user, but timeout, shutdown, and disconnect always fall back without approval.
 - **Normalize at the boundary** — every Agent has different hook names and payload shapes, but the rest of the app sees a small shared event vocabulary.
 - **Packages over built-ins** — built-in pets and sounds use the same package model as user-installed assets. The app scans packages instead of compiling a fixed asset list into the UI.
 - **Skills are first-class creation tools** — pet and sound generation is documented as CoPet Skills, so new assets can be produced by agents and installed into the same runtime directories used by the app.
@@ -20,9 +20,12 @@ The architecture is intentionally modular. Agent integrations, pet packages, sou
 
 ```text
 Agent CLI hooks
-  └─ short-lived shell/plugin calls
-      └─ localhost event endpoint
+  ├─ short-lived event calls
+  │   └─ localhost event endpoint
+  └─ bounded quick-action calls
+      └─ localhost action + decision endpoints
           └─ Rust runtime core
+              ├─ one-shot action registry
               ├─ Agent adapter manager
               ├─ event normalization and pet-state derivation
               ├─ config, package, and sound scanning
@@ -38,7 +41,15 @@ CoPet treats Agent activity as a small event stream: prompt submitted, tool star
 
 The Rust core owns state derivation. It maps events to durable UI concepts such as thinking, editing, inspecting, waiting, celebrating, or failed. The frontend then composes those Agent-derived states with local interaction state such as hover, click, long-press, drag, and idle behavior.
 
-This separation keeps hook code small and replaceable. Hooks report facts; the app decides what those facts mean.
+This separation keeps hook code small and replaceable. Hooks normally report facts; the app decides what those facts mean.
+
+## Codex Quick Actions
+
+Codex quick actions are a deliberately narrow bidirectional boundary. `PermissionRequest` and explicitly marked, unambiguous `Stop` events register an opaque action id, then wait on a separate decision endpoint for at most ten minutes. The UI resolves that exact id as `allowOnce`, `continueOnce`, or `fallback`; the registry consumes the decision once, so retries and concurrent tasks cannot approve another action.
+
+Permission cards expose only display-safe command context and never offer persistent or session-wide approval. Stop messages that ask for a choice, typed input, permanent permission, destructive confirmation, or sensitive credentials are not eligible for inline continuation. Closing a card, choosing **Handle in Codex**, expiry, runtime shutdown, and lost connectivity all resolve—or behave as—`fallback`. A fallback preserves native Codex handling and never emits an approval decision.
+
+Ordinary lifecycle events keep the original fast, silent degradation behavior. Only the two explicit quick-action hook types wait for a response, which prevents the bidirectional path from changing the latency contract of normal telemetry.
 
 ## Agent Integrations
 
@@ -77,7 +88,7 @@ Presentational components do not own Rust IPC. Stateful app operations go throug
 
 Rust owns OS integration, persistence, Agent hook mutation, runtime event handling, package scanning, and native window behavior. React owns interaction ergonomics, settings workflows, animation composition, and user feedback.
 
-Cross-boundary communication is kept narrow: typed Tauri commands for requests, Tauri events for state changes, and package manifests for assets. This makes the codebase easier to test because each boundary has a small contract.
+Cross-boundary communication is kept narrow: typed Tauri commands for requests, Tauri events for state changes, authenticated localhost endpoints for hook events and one-shot action decisions, and package manifests for assets. This makes the codebase easier to test because each boundary has a small contract.
 
 ## Quality Strategy
 
