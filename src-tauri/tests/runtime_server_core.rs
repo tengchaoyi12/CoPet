@@ -843,6 +843,8 @@ fn high_risk_permission_payload_never_enables_quick_approval() {
         "pnpm test & touch /tmp/copet-approved",
         "git branch -D unsaved-work",
         "cat ~/.npmrc",
+        "/tmp/evil/pnpm test",
+        "./cargo test",
     ]
     .into_iter()
     .enumerate()

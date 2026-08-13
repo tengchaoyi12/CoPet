@@ -332,11 +332,11 @@ pub fn allows_quick_permission(tool_name: &str, command: &str) -> bool {
     }
 
     let words = command.split_whitespace().collect::<Vec<_>>();
-    let executable = words
-        .first()
-        .and_then(|value| value.rsplit('/').next())
-        .unwrap_or_default()
-        .to_ascii_lowercase();
+    let raw_executable = words.first().copied().unwrap_or_default();
+    if raw_executable.contains('/') || raw_executable.contains('\\') {
+        return false;
+    }
+    let executable = raw_executable.to_ascii_lowercase();
     let argument = words
         .get(1)
         .map(|value| value.to_ascii_lowercase())

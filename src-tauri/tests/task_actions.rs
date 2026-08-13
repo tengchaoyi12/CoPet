@@ -79,6 +79,9 @@ fn unknown_or_high_risk_permission_never_gets_quick_approval() {
         ("Bash", "git branch -D unsaved-work"),
         ("Bash", "cat ~/.npmrc"),
         ("Bash", "sed -n 1,20p ~/.config/gh/hosts.yml"),
+        ("Bash", "/tmp/evil/pnpm test"),
+        ("Bash", "./cargo test"),
+        ("Bash", r"C:\evil\pnpm test"),
     ] {
         assert!(
             !allows_quick_permission(tool, command),
