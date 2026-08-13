@@ -72,7 +72,7 @@ pub struct ApplyTaskResult {
 const MAX_STORED_NOTIFICATIONS: usize = 100;
 const NOTIFICATION_RETENTION_MS: u64 = 30 * 24 * 60 * 60 * 1_000;
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TaskNotificationStore {
     notifications: BTreeMap<String, TaskNotification>,
@@ -101,7 +101,16 @@ impl TaskNotificationStore {
                 return Ok(Self::default());
             }
         };
+        let original = store.clone();
         store.prune_for_persistence(now_ms);
+        if store != original {
+            if let Err(error) = store.save(path, now_ms) {
+                eprintln!(
+                    "[copet:task-notifications:rewrite] 无法清理 {}：{error}",
+                    path.display()
+                );
+            }
+        }
         Ok(store)
     }
 
@@ -284,6 +293,15 @@ impl TaskNotificationStore {
         action_id: &str,
         decision: TaskActionDecision,
     ) -> Result<(), String> {
+        if decision == TaskActionDecision::Fallback {
+            let action = self
+                .notifications
+                .values_mut()
+                .find_map(|task| task.action.as_mut().filter(|action| action.id == action_id))
+                .ok_or_else(|| "任务操作已失效".to_string())?;
+            action.expire();
+            return Ok(());
+        }
         self.validate_action(action_id, decision)?;
         let task = self
             .notifications
@@ -294,15 +312,9 @@ impl TaskNotificationStore {
                     .is_some_and(|action| action.id == action_id)
             })
             .expect("validated action disappeared");
-        if decision == TaskActionDecision::Fallback {
-            if let Some(action) = task.action.as_mut() {
-                action.expire();
-            }
-        } else {
-            task.status = TaskStatus::Running;
-            task.unread = false;
-            task.action = None;
-        }
+        task.status = TaskStatus::Running;
+        task.unread = false;
+        task.action = None;
         Ok(())
     }
 

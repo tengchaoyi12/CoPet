@@ -669,10 +669,11 @@ impl RuntimeCore {
         decision: TaskActionDecision,
         now_ms: u64,
     ) -> Result<RuntimeUpdate, String> {
-        self.task_notifications.validate_action(id, decision)?;
-        let registry_result = self.actions.resolve(id, decision, now_ms);
-        if decision != TaskActionDecision::Fallback {
-            registry_result?;
+        if decision == TaskActionDecision::Fallback {
+            let _ = self.actions.resolve(id, decision, now_ms);
+        } else {
+            self.task_notifications.validate_action(id, decision)?;
+            self.actions.resolve(id, decision, now_ms)?;
         }
         self.task_notifications.transition_action(id, decision)?;
         self.save_task_notifications(now_ms);
@@ -855,6 +856,21 @@ pub struct RuntimeUpdate {
     pub messages: Vec<AgentMessage>,
     pub notifications: Vec<TaskNotification>,
     pub attention: Option<TaskAttention>,
+}
+
+pub fn runtime_update_log_summary(update: &RuntimeUpdate) -> serde_json::Value {
+    serde_json::json!({
+        "currentState": &update.current_state,
+        "messageCount": update.messages.len(),
+        "notificationCount": update.notifications.len(),
+        "notificationStates": update.notifications.iter().map(|notification| serde_json::json!({
+            "id": notification.id,
+            "status": notification.status,
+            "actionKind": notification.action.as_ref().map(|action| action.kind),
+            "actionState": notification.action.as_ref().map(|action| action.state),
+        })).collect::<Vec<_>>(),
+        "attentionKind": update.attention.as_ref().map(|attention| attention.kind),
+    })
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
@@ -1225,18 +1241,7 @@ fn handle_connection(
         let update = core.take_update();
         dev_log_runtime(
             "tauri.emit.pet-state-changed",
-            serde_json::json!({
-                "currentState": &update.current_state,
-                "messages": &update.messages,
-                "notificationCount": update.notifications.len(),
-                "notificationStates": update.notifications.iter().map(|notification| serde_json::json!({
-                    "id": notification.id,
-                    "status": notification.status,
-                    "actionKind": notification.action.as_ref().map(|action| action.kind),
-                    "actionState": notification.action.as_ref().map(|action| action.state),
-                })).collect::<Vec<_>>(),
-                "attention": &update.attention,
-            }),
+            runtime_update_log_summary(&update),
         );
         on_state(update);
     }

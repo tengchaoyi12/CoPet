@@ -23,7 +23,7 @@ use config_store::{set_builtin_pets_dir, set_builtin_sounds_dir, ConfigStore, Pe
 use i18n::{default_locale, t, Locale, LocalePreference, MessageKey};
 use pet_import::{PetImportCommitResult, PetImportPreviewBatch, PetImportSession};
 use pet_package::PetSummary;
-use runtime_server::{RuntimeManager, RuntimeSnapshot, RuntimeUpdate};
+use runtime_server::{runtime_update_log_summary, RuntimeManager, RuntimeSnapshot, RuntimeUpdate};
 use sound_pack::SoundPackSummary;
 use std::path::PathBuf;
 use std::time::Duration;
@@ -731,15 +731,7 @@ fn emit_pet_window_visibility_changed(app: &tauri::AppHandle, visible: bool) {
 }
 
 pub(crate) fn emit_runtime_update(app: &tauri::AppHandle, state: RuntimeUpdate) {
-    dev_log_app(
-        "emit.pet-state-changed",
-        serde_json::json!({
-            "currentState": &state.current_state,
-            "messages": &state.messages,
-            "notifications": &state.notifications,
-            "attention": &state.attention,
-        }),
-    );
+    dev_log_app("emit.pet-state-changed", runtime_update_log_summary(&state));
     for label in ["pet", "settings"] {
         let _ = app.emit_to(
             EventTarget::webview_window(label),

@@ -38,127 +38,108 @@ export function TaskNotifications({
         const showQuickAction = Boolean(
           actionPending && action?.quickActionAllowed,
         );
+        const openNotification = () => {
+          if (action && actionPending) {
+            onFallbackAndOpen(notification.id, action.id);
+          } else {
+            onOpen(notification.id);
+          }
+        };
         return (
           <div
             className="pet-task-notification"
             data-status={notification.status}
             data-testid="task-notification"
             key={notification.id}
-            onClick={() => {
-              if (action && actionPending) {
-                onFallbackAndOpen(notification.id, action.id);
-              } else {
-                onOpen(notification.id);
-              }
-            }}
-            onKeyDown={(event) => {
-              if (
-                event.target === event.currentTarget &&
-                (event.key === "Enter" || event.key === " ")
-              ) {
-                event.preventDefault();
-                if (action && actionPending) {
-                  onFallbackAndOpen(notification.id, action.id);
-                } else {
-                  onOpen(notification.id);
-                }
-              }
-            }}
-            role="button"
-            tabIndex={0}
           >
-            {iconUrl ? (
-              <img
-                alt={notification.displayName}
-                className="pet-agent-icon"
-                src={iconUrl}
-              />
-            ) : null}
-            <span className="pet-task-notification-copy">
-              <span className="pet-task-notification-status">
-                {t(`taskNotification${capitalize(notification.status)}`)}
+            <button
+              className="pet-task-notification-body"
+              onClick={openNotification}
+              type="button"
+            >
+              {iconUrl ? (
+                <img
+                  alt={notification.displayName}
+                  className="pet-agent-icon"
+                  src={iconUrl}
+                />
+              ) : null}
+              <span className="pet-task-notification-copy">
+                <span className="pet-task-notification-status">
+                  {t(`taskNotification${capitalize(notification.status)}`)}
+                </span>
+                {notification.title ? (
+                  <span className="pet-task-notification-title">
+                    {notification.title}
+                  </span>
+                ) : null}
+                {notification.summary ? (
+                  <span
+                    className="pet-task-notification-summary"
+                    title={notification.summary}
+                  >
+                    {notification.summary}
+                  </span>
+                ) : null}
+                {action?.requestedAction &&
+                action.requestedAction !== notification.summary ? (
+                  <span
+                    className="pet-task-notification-summary"
+                    title={action.requestedAction}
+                  >
+                    {action.requestedAction}
+                  </span>
+                ) : null}
+                {action?.kind === "permission" ? (
+                  <span className="pet-task-action-details">
+                    {action.toolName ? (
+                      <span title={action.toolName}>
+                        {t("taskActionTool")}: {action.toolName}
+                      </span>
+                    ) : null}
+                    {action.command ? (
+                      <code title={action.command}>{action.command}</code>
+                    ) : null}
+                    {action.cwd ? (
+                      <span title={action.cwd}>
+                        {t("taskActionWorkingDirectory")}: {action.cwd}
+                      </span>
+                    ) : null}
+                    <strong>{t("taskActionAllowOnceScope")}</strong>
+                  </span>
+                ) : null}
               </span>
-              {notification.title ? (
-                <span className="pet-task-notification-title">
-                  {notification.title}
-                </span>
-              ) : null}
-              {notification.summary ? (
-                <span
-                  className="pet-task-notification-summary"
-                  title={notification.summary}
-                >
-                  {notification.summary}
-                </span>
-              ) : null}
-              {action?.requestedAction &&
-              action.requestedAction !== notification.summary ? (
-                <span
-                  className="pet-task-notification-summary"
-                  title={action.requestedAction}
-                >
-                  {action.requestedAction}
-                </span>
-              ) : null}
-              {action?.kind === "permission" ? (
-                <span className="pet-task-action-details">
-                  {action.toolName ? (
-                    <span title={action.toolName}>
-                      {t("taskActionTool")}: {action.toolName}
-                    </span>
-                  ) : null}
-                  {action.command ? (
-                    <code title={action.command}>{action.command}</code>
-                  ) : null}
-                  {action.cwd ? (
-                    <span title={action.cwd}>
-                      {t("taskActionWorkingDirectory")}: {action.cwd}
-                    </span>
-                  ) : null}
-                  <strong>{t("taskActionAllowOnceScope")}</strong>
-                </span>
-              ) : null}
-              {action ? (
-                <span
-                  className="pet-task-action-buttons"
-                  onClick={(event) => event.stopPropagation()}
-                  onKeyDown={(event) => event.stopPropagation()}
-                >
-                  {showQuickAction ? (
-                    <button
-                      className="pet-task-action-primary"
-                      disabled={actionBusy}
-                      onClick={() => {
-                        if (action.kind === "continue") {
-                          onContinueOnce(action.id);
-                        } else {
-                          onAllowOnce(action.id);
-                        }
-                      }}
-                      type="button"
-                    >
-                      {action.kind === "continue"
-                        ? t("taskActionContinue")
-                        : t("taskActionAllowAndContinue")}
-                    </button>
-                  ) : null}
+            </button>
+            {action ? (
+              <span className="pet-task-action-buttons">
+                {showQuickAction ? (
                   <button
-                    className="pet-task-action-secondary"
+                    className="pet-task-action-primary"
                     disabled={actionBusy}
                     onClick={() => {
-                      if (actionPending) {
-                        onFallbackAndOpen(notification.id, action.id);
+                      if (action.kind === "continue") {
+                        onContinueOnce(action.id);
                       } else {
-                        onOpen(notification.id);
+                        onAllowOnce(action.id);
                       }
                     }}
                     type="button"
                   >
-                    {t("taskActionHandleInCodex")}
+                    {action.kind === "continue"
+                      ? t("taskActionContinue")
+                      : t("taskActionAllowAndContinue")}
                   </button>
-                </span>
-              ) : null}
-            </span>
+                ) : null}
+                <button
+                  className="pet-task-action-secondary"
+                  disabled={actionBusy}
+                  onClick={openNotification}
+                  type="button"
+                >
+                  {t("taskActionHandleInCodex")}
+                </button>
+              </span>
+            ) : null}
             <button
               aria-label={t("dismiss")}
               className="pet-agent-message-dismiss"

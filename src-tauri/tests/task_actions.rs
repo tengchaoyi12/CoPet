@@ -74,6 +74,11 @@ fn unknown_or_high_risk_permission_never_gets_quick_approval() {
         ),
         ("Bash", "python -c 'danger()'"),
         ("Bash", "pnpm test && rm -rf build"),
+        ("Bash", "pnpm test & touch /tmp/copet-approved"),
+        ("Bash", "pnpm test | tee /tmp/copet-approved"),
+        ("Bash", "git branch -D unsaved-work"),
+        ("Bash", "cat ~/.npmrc"),
+        ("Bash", "sed -n 1,20p ~/.config/gh/hosts.yml"),
     ] {
         assert!(
             !allows_quick_permission(tool, command),

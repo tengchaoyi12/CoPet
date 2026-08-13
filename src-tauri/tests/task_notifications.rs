@@ -338,6 +338,51 @@ fn restored_notification_does_not_restore_executable_action() {
 }
 
 #[test]
+fn loading_legacy_permission_context_rewrites_sanitized_file() {
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("task-notifications.json");
+    fs::write(
+        &path,
+        r#"{
+          "notifications": {
+            "codex:thread-1:turn-1": {
+              "id": "codex:thread-1:turn-1",
+              "agent": "codex",
+              "displayName": "Codex",
+              "sessionId": "thread-1",
+              "turnId": "turn-1",
+              "status": "waiting",
+              "title": null,
+              "summary": "legacy-secret-description",
+              "action": {
+                "id": "legacy-action",
+                "kind": "permission",
+                "state": "pending",
+                "label": "允许并继续",
+                "requestedAction": "legacy-secret-description",
+                "toolName": "Bash",
+                "command": "AWS_SECRET_ACCESS_KEY=legacy-secret pnpm test",
+                "cwd": "/legacy/secret/repo",
+                "expiresAtMs": 600000,
+                "quickActionAllowed": true
+              },
+              "unread": true,
+              "updatedAtMs": 100
+            }
+          }
+        }"#,
+    )
+    .unwrap();
+
+    TaskNotificationStore::load(&path, 200).unwrap();
+
+    let rewritten = fs::read_to_string(&path).unwrap();
+    assert!(!rewritten.contains("legacy-secret"));
+    assert!(!rewritten.contains("/legacy/secret/repo"));
+    assert!(rewritten.contains(r#""state": "expired""#));
+}
+
+#[test]
 fn expiring_pending_actions_removes_all_quick_approval_context() {
     let mut store = TaskNotificationStore::default();
     store.apply(

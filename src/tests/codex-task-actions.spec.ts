@@ -184,7 +184,10 @@ test("点击 pending 卡片正文也先 fallback 再打开任务", async ({ brow
   });
   const page = await harness.openPage("pet");
 
-  await page.getByTestId("task-notification").click();
+  await page
+    .getByTestId("task-notification")
+    .locator(":scope > .pet-task-notification-body")
+    .click();
 
   await expect
     .poll(
@@ -233,7 +236,7 @@ test("键盘关闭 pending 卡片不会触发打开任务", async ({ browser }) 
 
 test("pending 动作达到 expiresAtMs 后自动隐藏批准按钮", async ({ browser }) => {
   const taskAction = action("action-live-expiry", "continue", {
-    expiresAtMs: Date.now() + 300,
+    expiresAtMs: Date.now() + 2_000,
   });
   const harness = await createAppHarness(browser, {
     runtimeStatus: runtimeWith([notification("task-live-expiry", taskAction)]),
@@ -246,7 +249,7 @@ test("pending 动作达到 expiresAtMs 后自动隐藏批准按钮", async ({ br
   });
 
   await expect(continueButton).toBeVisible();
-  await expect(continueButton).toHaveCount(0, { timeout: 2_000 });
+  await expect(continueButton).toHaveCount(0, { timeout: 4_000 });
 });
 
 test("不安全、过期和需要抉择的动作不显示快捷批准", async ({ browser }) => {

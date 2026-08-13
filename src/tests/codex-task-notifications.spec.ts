@@ -85,6 +85,13 @@ test("Codex 完成提醒可点击并按通知 id 打开", async ({ browser }) =>
   await expect(page.getByText("任务完成啦，快去看看吧。")).toBeVisible();
   await expect(page.getByText("修复登录按钮")).toBeVisible();
   await expect(page.getByTestId("pet-agent-message")).toHaveCount(0);
+  await expect(page.getByTestId("task-notification")).not.toHaveAttribute(
+    "role",
+    "button",
+  );
+  await expect(
+    page.getByTestId("task-notification").locator(":scope > button").first(),
+  ).toContainText("修复登录按钮");
   await page.getByTestId("task-notification").click();
 
   expect(harness.calls).toContainEqual({

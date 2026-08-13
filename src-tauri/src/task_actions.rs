@@ -324,7 +324,7 @@ pub fn allows_quick_permission(tool_name: &str, command: &str) -> bool {
 
     if command.trim().is_empty()
         || excluded.iter().any(|needle| normalized.contains(needle))
-        || ["&&", "||", ";", "\n", "`", "$(", ">", "<"]
+        || ["&", "|", ";", "\n", "`", "$(", ">", "<"]
             .iter()
             .any(|operator| command.contains(operator))
     {
@@ -360,13 +360,8 @@ pub fn allows_quick_permission(tool_name: &str, command: &str) -> bool {
             argument.as_str(),
             "test" | "build" | "check" | "fmt" | "clippy"
         ),
-        "git" => matches!(
-            argument.as_str(),
-            "status" | "diff" | "log" | "show" | "branch" | "rev-parse"
-        ),
         "go" | "swift" => matches!(argument.as_str(), "test" | "build"),
-        "pytest" | "rg" | "grep" | "ls" | "pwd" | "sed" | "head" | "tail" | "cat" | "wc"
-        | "xcodebuild" => true,
+        "pytest" => true,
         _ => false,
     }
 }

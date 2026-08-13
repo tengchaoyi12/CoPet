@@ -1,6 +1,9 @@
 use copet_lib::{
     diagnostics::RotatingLog,
-    runtime_server::{handle_http_request, RuntimeCore, RuntimeServerError, RuntimeToken},
+    runtime_server::{
+        handle_http_request, runtime_update_log_summary, RuntimeCore, RuntimeServerError,
+        RuntimeToken,
+    },
     runtime_state::{normalize_runtime_event, PetStateId, RuntimeEvent},
     task_actions::{ActionRegistry, TaskActionDecision, WaitDecision},
     task_notifications::{AttentionKind, TaskNotificationStore, TaskStatus},
@@ -835,13 +838,56 @@ fn authenticated_action_request_returns_unique_action_id() {
 #[test]
 fn high_risk_permission_payload_never_enables_quick_approval() {
     let mut core = RuntimeCore::new("secret".to_string());
-    let body = r#"{"agent":"codex","kind":"permission.waiting","hookInput":{"session_id":"thread-1","turn_id":"turn-1","run_id_suffix":"approval-1","tool_name":"Bash","tool_input":{"command":"rm -rf build","description":"清理构建目录"},"cwd":"/repo"}}"#;
+    for (index, command) in [
+        "rm -rf build",
+        "pnpm test & touch /tmp/copet-approved",
+        "git branch -D unsaved-work",
+        "cat ~/.npmrc",
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let body = json!({
+            "agent": "codex",
+            "kind": "permission.waiting",
+            "hookInput": {
+                "session_id": format!("thread-{index}"),
+                "turn_id": "turn-1",
+                "run_id_suffix": format!("approval-{index}"),
+                "tool_name": "Bash",
+                "tool_input": { "command": command, "description": "需要确认" },
+                "cwd": "/repo"
+            }
+        })
+        .to_string();
+        let action_id = register_action(&mut core, &body, 100 + index as u64);
+        let status = core.status();
+        let action = status
+            .notifications
+            .iter()
+            .find_map(|notification| {
+                notification
+                    .action
+                    .as_ref()
+                    .filter(|action| action.id == action_id)
+            })
+            .unwrap();
+        assert!(!action.quick_action_allowed, "误允许：{command}");
+    }
+}
 
+#[test]
+fn runtime_update_log_summary_omits_permission_context() {
+    let mut core = RuntimeCore::new("secret".to_string());
+    let body = r#"{"agent":"codex","kind":"permission.waiting","hookInput":{"session_id":"thread-1","turn_id":"turn-1","run_id_suffix":"approval-1","tool_name":"Bash","tool_input":{"command":"AWS_SECRET_ACCESS_KEY=actual-value pnpm test","description":"secret-description"},"cwd":"/secret/repo"}}"#;
     register_action(&mut core, body, 100);
 
-    let status = core.status();
-    let action = status.notifications[0].action.as_ref().unwrap();
-    assert!(!action.quick_action_allowed);
+    let summary = runtime_update_log_summary(&core.take_update()).to_string();
+
+    assert!(!summary.contains("actual-value"));
+    assert!(!summary.contains("secret-description"));
+    assert!(!summary.contains("/secret/repo"));
+    assert!(summary.contains("notificationStates"));
 }
 
 #[test]
@@ -943,7 +989,7 @@ fn stale_fallback_is_idempotent_and_keeps_notification_openable() {
 fn advancing_time_expires_notification_action() {
     let mut core = RuntimeCore::new("secret".to_string());
     let body = r#"{"agent":"codex","kind":"permission.waiting","hookInput":{"session_id":"thread-1","turn_id":"turn-1","run_id_suffix":"approval-1","tool_name":"Bash","tool_input":{"command":"pnpm test"},"cwd":"/repo"}}"#;
-    register_action(&mut core, body, 100);
+    let id = register_action(&mut core, body, 100);
 
     core.advance_time(600_100);
 
@@ -954,6 +1000,14 @@ fn advancing_time_expires_notification_action() {
         copet_lib::task_actions::TaskActionState::Expired
     );
     assert!(!action.quick_action_allowed);
+
+    let update = core
+        .resolve_task_action(&id, TaskActionDecision::Fallback, 600_101)
+        .unwrap();
+    assert_eq!(
+        update.notifications[0].action.as_ref().unwrap().state,
+        copet_lib::task_actions::TaskActionState::Expired
+    );
 }
 
 #[test]
