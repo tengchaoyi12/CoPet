@@ -55,7 +55,9 @@ export function useTaskNotifications() {
 
   return useMemo(
     () => ({
-      notifications: visible ? notifications : [],
+      notifications: visible
+        ? notifications.filter((notification) => notification.unread)
+        : [],
       actionNowMs,
       busyActionIds,
       open: async (id: string) => {

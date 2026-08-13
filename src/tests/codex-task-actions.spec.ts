@@ -110,6 +110,7 @@ test("继续按钮按 action id 提交 continueOnce 且不打开 Codex", async (
   expect(harness.calls.some((call) => call.command === "open_task_notification")).toBe(
     false,
   );
+  await expect(page.getByTestId("task-notification")).toHaveCount(0);
 });
 
 test("权限卡默认只展示命令并按需展开详情", async ({ browser }) => {
@@ -145,6 +146,36 @@ test("权限卡默认只展示命令并按需展开详情", async ({ browser }) 
   expect(harness.calls.some((call) => call.command === "open_task_notification")).toBe(
     false,
   );
+  await expect(page.getByTestId("task-notification")).toHaveCount(0);
+});
+
+test("打开需要回复的任务后隐藏已读提醒", async ({ browser }) => {
+  const needsReply = {
+    id: "task-needs-reply",
+    agent: "codex",
+    displayName: "Codex",
+    sessionId: "task-needs-reply",
+    turnId: null,
+    status: "waiting",
+    title: "需要你的回复",
+    summary: "请在 Codex 中选择处理方式",
+    unread: true,
+    updatedAtMs: Date.now(),
+    action: null,
+  } as TaskNotification;
+  const harness = await createAppHarness(browser, {
+    runtimeStatus: runtimeWith([needsReply]),
+    state: zhState,
+  });
+  const page = await harness.openPage("pet");
+
+  await page.getByRole("button", { name: "打开 Codex", exact: true }).click();
+
+  expect(harness.calls).toContainEqual({
+    command: "open_task_notification",
+    args: { id: "task-needs-reply" },
+  });
+  await expect(page.getByTestId("task-notification")).toHaveCount(0);
 });
 
 test("命令失败时保留提醒并显示错误", async ({ browser }) => {

@@ -495,10 +495,26 @@ export async function createAppHarness(browser: Browser, options: AppHarnessOpti
           autostartEnabled = Boolean(args.enabled);
           return autostartEnabled;
         }
-        if (
-          command === "open_task_notification" ||
-          command === "dismiss_task_notification"
-        ) {
+        if (command === "open_task_notification") {
+          runtimeStatus = {
+            ...runtimeStatus,
+            notifications: (runtimeStatus.notifications ?? []).map(
+              (notification) =>
+                notification.id === args.id
+                  ? { ...notification, unread: false }
+                  : notification,
+            ),
+            attention: null,
+          };
+          await emitRuntimeStatus();
+          return {
+            currentState: runtimeStatus.currentState,
+            messages: runtimeStatus.messages,
+            notifications: runtimeStatus.notifications ?? [],
+            attention: null,
+          };
+        }
+        if (command === "dismiss_task_notification") {
           runtimeStatus = {
             ...runtimeStatus,
             notifications: (runtimeStatus.notifications ?? []).filter(
