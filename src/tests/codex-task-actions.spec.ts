@@ -94,7 +94,13 @@ test("继续按钮按 action id 提交 continueOnce 且不打开 Codex", async (
   });
   const page = await harness.openPage("pet");
 
-  await expect(page.getByText("测试已经完成，可以继续收尾。")).toBeVisible();
+  await expect(
+    page.locator(".pet-task-notification-summary"),
+  ).toHaveText("测试已经完成，可以继续收尾。");
+  await page.getByRole("button", { name: "详情", exact: true }).click();
+  await expect(page.locator(".pet-task-action-details")).toContainText(
+    "测试已经完成，可以继续收尾。",
+  );
   await page.getByRole("button", { name: "继续执行", exact: true }).click();
 
   expect(harness.calls).toContainEqual({
@@ -106,7 +112,7 @@ test("继续按钮按 action id 提交 continueOnce 且不打开 Codex", async (
   );
 });
 
-test("权限按钮展示范围并按 action id 提交 allowOnce", async ({ browser }) => {
+test("权限卡默认只展示命令并按需展开详情", async ({ browser }) => {
   const taskAction = action("action-permission", "permission");
   const harness = await createAppHarness(browser, {
     runtimeStatus: runtimeWith([notification("task-permission", taskAction)]),
@@ -114,10 +120,23 @@ test("权限按钮展示范围并按 action id 提交 allowOnce", async ({ brows
   });
   const page = await harness.openPage("pet");
 
-  await expect(page.getByText("pnpm test:frontend")).toBeVisible();
+  await expect(page.locator(".pet-task-notification-summary")).toHaveText(
+    "pnpm test:frontend",
+  );
+  await expect(page.getByText("/Users/test/CoPet")).toBeHidden();
+  await expect(page.getByText("仅允许本次操作")).toBeHidden();
+
+  const detailsButton = page.getByRole("button", { name: "详情", exact: true });
+  await expect(detailsButton).toHaveAttribute("aria-expanded", "false");
+  await detailsButton.click();
+
+  await expect(detailsButton).toHaveAttribute("aria-expanded", "true");
   await expect(page.getByText("/Users/test/CoPet")).toBeVisible();
   await expect(page.getByText("仅允许本次操作")).toBeVisible();
-  await page.getByRole("button", { name: "允许并继续", exact: true }).click();
+  await expect(page.locator(".pet-task-action-details code")).toHaveText(
+    "pnpm test:frontend",
+  );
+  await page.getByRole("button", { name: "仅允许这次", exact: true }).click();
 
   expect(harness.calls).toContainEqual({
     command: "resolve_task_action",
@@ -151,6 +170,7 @@ test("在 Codex 中处理先 fallback 再打开对应任务", async ({ browser }
   });
   const page = await harness.openPage("pet");
 
+  await page.getByRole("button", { name: "详情", exact: true }).click();
   await page.getByRole("button", { name: "在 Codex 中处理", exact: true }).click();
 
   await expect
@@ -280,9 +300,118 @@ test("不安全、过期和需要抉择的动作不显示快捷批准", async ({
   await expect(page.getByRole("button", { name: "继续执行", exact: true })).toHaveCount(
     0,
   );
-  await expect(page.getByRole("button", { name: "允许并继续", exact: true })).toHaveCount(
+  await expect(page.getByRole("button", { name: "仅允许这次", exact: true })).toHaveCount(
     0,
   );
+  await expect(page.getByRole("button", { name: "打开 Codex", exact: true })).toHaveCount(
+    3,
+  );
+
+  const unsafeCard = page.getByTestId("task-notification").filter({
+    hasText: "task-unsafe",
+  });
+  await unsafeCard.getByRole("button", { name: "打开 Codex", exact: true }).click();
+  await expect
+    .poll(
+      () =>
+        harness.calls.filter((call) =>
+          ["resolve_task_action", "open_task_notification"].includes(call.command),
+        ).length,
+    )
+    .toBe(2);
+  expect(
+    harness.calls.filter((call) =>
+      ["resolve_task_action", "open_task_notification"].includes(call.command),
+    ),
+  ).toEqual([
+    {
+      command: "resolve_task_action",
+      args: { id: "action-unsafe", decision: "fallback" },
+    },
+    {
+      command: "open_task_notification",
+      args: { id: "task-unsafe" },
+    },
+  ]);
+});
+
+test("多张卡片同时只展开一个详情区域", async ({ browser }) => {
+  const first = notification(
+    "task-details-first",
+    action("action-details-first", "permission", {
+      cwd: "/Users/test/first",
+    }),
+  );
+  const second = notification(
+    "task-details-second",
+    action("action-details-second", "permission", {
+      command: "cargo test",
+      cwd: "/Users/test/second",
+    }),
+  );
+  const harness = await createAppHarness(browser, {
+    runtimeStatus: runtimeWith([first, second]),
+    state: zhState,
+  });
+  const page = await harness.openPage("pet");
+  const detailsButtons = page.getByRole("button", { name: "详情", exact: true });
+
+  await detailsButtons.nth(0).click();
+  await expect(page.getByText("/Users/test/first")).toBeVisible();
+  await expect(page.getByText("/Users/test/second")).toBeHidden();
+
+  await detailsButtons.nth(1).click();
+  await expect(page.getByText("/Users/test/first")).toBeHidden();
+  await expect(page.getByText("/Users/test/second")).toBeVisible();
+  await expect(detailsButtons.nth(0)).toHaveAttribute("aria-expanded", "false");
+  await expect(detailsButtons.nth(1)).toHaveAttribute("aria-expanded", "true");
+});
+
+test("展开详情后重新测量原生宠物窗口", async ({ browser }) => {
+  const taskAction = action("action-resize-details", "permission");
+  const harness = await createAppHarness(browser, {
+    runtimeStatus: runtimeWith([
+      notification("task-resize-details", taskAction),
+    ]),
+    state: zhState,
+  });
+  const page = await harness.openPage("pet");
+  await expect(page.getByRole("button", { name: "详情", exact: true })).toBeVisible();
+  await page.waitForTimeout(600);
+  const resizeCountBefore = harness.invocations("plugin:window|set_size").length;
+
+  await page.getByRole("button", { name: "详情", exact: true }).click();
+
+  await expect
+    .poll(() => harness.invocations("plugin:window|set_size").length)
+    .toBeGreaterThan(resizeCountBefore);
+});
+
+test("展开动作过期后再次测量并回缩原生宠物窗口", async ({ browser }) => {
+  const taskAction = action("action-expiry-resize", "permission", {
+    expiresAtMs: Date.now() + 3_000,
+  });
+  const harness = await createAppHarness(browser, {
+    runtimeStatus: runtimeWith([
+      notification("task-expiry-resize", taskAction),
+    ]),
+    state: zhState,
+  });
+  const page = await harness.openPage("pet");
+  await page.waitForTimeout(600);
+  await page.getByRole("button", { name: "详情", exact: true }).click();
+  await expect(page.locator(".pet-task-action-details")).toBeVisible();
+  await page.waitForTimeout(600);
+  const resizeCountBeforeExpiry = harness.invocations(
+    "plugin:window|set_size",
+  ).length;
+
+  await expect(page.locator(".pet-task-action-details")).toBeHidden({
+    timeout: 5_000,
+  });
+  await expect
+    .poll(() => harness.invocations("plugin:window|set_size").length)
+    .toBeGreaterThan(resizeCountBeforeExpiry);
 });
 
 test("并行任务按钮严格绑定各自 action id", async ({ browser }) => {

@@ -121,7 +121,7 @@ test("等待、失败和并行任务分别显示，并按 id 关闭", async ({ b
   const page = await harness.openPage("pet");
 
   await expect(page.getByTestId("task-notification")).toHaveCount(2);
-  await expect(page.getByText("任务需要你处理，快去看看吧。")).toBeVisible();
+  await expect(page.getByText("需要你的回复")).toBeVisible();
   await expect(page.getByText("任务出错了，快去看看吧。")).toBeVisible();
 
   const failedRow = page.getByTestId("task-notification").filter({
@@ -236,4 +236,26 @@ test("同一任务等待后完成仍更新提醒且宠物保持静态静音", as
   });
   await expect(page.getByTestId("task-notification")).toHaveCount(1);
   expect(await harness.playedSoundUrls(page)).toEqual([]);
+});
+
+test("最多显示三张提醒且不会关闭未显示任务", async ({ browser }) => {
+  const notifications = [
+    notification("codex:thread-1:turn-1", "waiting", "第一项", 400),
+    notification("codex:thread-2:turn-2", "failed", "第二项", 300),
+    notification("codex:thread-3:turn-3", "completed", "第三项", 200),
+    notification("codex:thread-4:turn-4", "waiting", "第四项", 100),
+  ];
+  const harness = await createAppHarness(browser, {
+    runtimeStatus: runtimeWith(notifications, "waiting"),
+    state: zhState,
+  });
+  const page = await harness.openPage("pet");
+
+  await expect(page.getByTestId("task-notification")).toHaveCount(3);
+  await expect(page.getByText("第一项")).toBeVisible();
+  await expect(page.getByText("第三项")).toBeVisible();
+  await expect(page.getByText("第四项")).toHaveCount(0);
+  expect(
+    harness.calls.some((call) => call.command === "dismiss_task_notification"),
+  ).toBe(false);
 });

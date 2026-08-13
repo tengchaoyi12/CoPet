@@ -124,6 +124,11 @@ select {
   -webkit-user-select: none;
 }
 
+.pet-task-notifications {
+  width: 280px;
+  max-width: none;
+}
+
 .pet-agent-messages::after,
 .pet-task-notifications::after {
   content: "";
@@ -182,6 +187,11 @@ select {
   cursor: pointer;
 }
 
+.pet-task-notification:has(.pet-task-action-details-toggle)
+  .pet-task-notification-body {
+  padding-right: 34px;
+}
+
 .pet-task-notification-body:focus-visible {
   outline: 1px solid hsl(var(--ring));
   outline-offset: 1px;
@@ -212,20 +222,32 @@ select {
 }
 
 .pet-task-notification-summary {
-  display: -webkit-box;
+  display: block;
   color: hsl(var(--foreground));
   line-height: 1.35;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 3;
-  line-clamp: 3;
+  white-space: nowrap;
+}
+
+.pet-task-notification-command {
+  padding: 2px 3px;
+  border-radius: 3px;
+  background: hsl(var(--muted) / 0.7);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 
 .pet-task-action-details {
   display: grid;
   gap: 2px;
-  margin-top: 3px;
+  margin: 1px 0 0 20px;
+  padding: 5px 6px;
+  border-radius: 4px;
+  background: hsl(var(--muted) / 0.45);
   color: hsl(var(--muted-foreground));
   font-size: 10px;
+}
+
+.pet-task-action-details[hidden] {
+  display: none;
 }
 
 .pet-task-action-details code {
@@ -234,11 +256,55 @@ select {
   background: hsl(var(--muted) / 0.7);
   color: hsl(var(--foreground));
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
 }
 
 .pet-task-action-details strong {
   color: hsl(var(--foreground));
+}
+
+.pet-task-action-details-toggle,
+.pet-task-action-inline-open {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: hsl(var(--muted-foreground));
+  font: inherit;
+  cursor: pointer;
+}
+
+.pet-task-action-details-toggle {
+  position: absolute;
+  top: 4px;
+  right: 21px;
+  display: inline-flex;
+  align-items: center;
+  gap: 1px;
+  white-space: nowrap;
+}
+
+.pet-task-action-details-toggle svg {
+  width: 11px;
+  height: 11px;
+  transition: transform 120ms ease;
+}
+
+.pet-task-action-details-toggle[aria-expanded="true"] svg {
+  transform: rotate(180deg);
+}
+
+.pet-task-action-inline-open {
+  justify-self: start;
+  margin-top: 3px;
+  color: hsl(var(--foreground));
+  font-weight: 700;
+}
+
+.pet-task-action-details-toggle:focus-visible,
+.pet-task-action-inline-open:focus-visible {
+  outline: 1px solid hsl(var(--ring));
+  outline-offset: 2px;
 }
 
 .pet-task-action-buttons {
@@ -247,6 +313,11 @@ select {
   gap: 4px;
   margin-left: 24px;
   margin-top: 5px;
+}
+
+.pet-task-action-buttons:has(.pet-task-action-primary:only-child),
+.pet-task-action-buttons:has(.pet-task-action-secondary:only-child) {
+  display: grid;
 }
 
 .pet-task-action-buttons button {
@@ -319,6 +390,11 @@ select {
     opacity 120ms ease,
     color 120ms ease,
     background 120ms ease;
+}
+
+.pet-task-notification > .pet-agent-message-dismiss {
+  top: 4px;
+  transform: none;
 }
 
 .pet-agent-message:hover .pet-agent-message-dismiss,

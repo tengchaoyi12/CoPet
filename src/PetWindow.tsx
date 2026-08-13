@@ -5,7 +5,7 @@ import type {
   CSSProperties,
   MouseEvent as ReactMouseEvent,
 } from "react";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 
 import { ErrorView, LoadingView } from "./components/AppShell";
@@ -97,9 +97,9 @@ export function PetWindow() {
       });
     },
   });
-  const displayedTaskNotifications = taskNotifications.notifications;
+  const displayedTaskNotifications = taskNotifications.notifications.slice(0, 3);
   const taskNotificationAgents = new Set(
-    displayedTaskNotifications.map((notification) => notification.agent),
+    taskNotifications.notifications.map((notification) => notification.agent),
   );
   const displayedAgentMessages = agentMessages.filter(
     (message) => !taskNotificationAgents.has(message.agent),
@@ -121,6 +121,11 @@ export function PetWindow() {
     startScale: number;
     startSize: PetWindowSize;
   } | null>(null);
+  const [taskNotificationLayoutVersion, setTaskNotificationLayoutVersion] =
+    useState(0);
+  const handleTaskNotificationLayoutChange = useCallback(() => {
+    setTaskNotificationLayoutVersion((version) => version + 1);
+  }, []);
 
   const { openMenu: openPetContextMenu } = usePetContextMenu({
     labels: {
@@ -202,6 +207,8 @@ export function PetWindow() {
     petScale,
     displayedAgentMessages.length,
     displayedTaskNotifications.length,
+    taskNotifications.notifications,
+    taskNotificationLayoutVersion,
     viewportSize.height,
     viewportSize.width,
   ]);
@@ -350,6 +357,7 @@ export function PetWindow() {
               onFallbackAndOpen={(notificationId, actionId) =>
                 void taskNotifications.fallbackAndOpen(notificationId, actionId)
               }
+              onLayoutChange={handleTaskNotificationLayoutChange}
               onOpen={(id) => void taskNotifications.open(id)}
             />
           ) : null}
